@@ -14,7 +14,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { flushSync } from "react-dom";
 import { api, readNdjson } from "./api.ts";
 import { SamplerForm, customFromText, validateCustom } from "./SamplerForm.tsx";
-import type { Bootstrap, Chat, TurnEvent } from "./types.ts";
+import type { Bootstrap, Chat, Preset, TurnEvent } from "./types.ts";
 
 type Tab = "sheets" | "world" | "prompts" | "memory" | "model";
 
@@ -196,7 +196,7 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
   }
 
   async function restart() {
-    if (!window.confirm("Start this scene over? The transcript is cleared, sheets return to the character and world cards, and play memories are removed. Prompts, cast, and pins stay.")) return;
+    if (!window.confirm("Start this scene over? The transcript is cleared, sheets return to the character and world cards, and play memories are removed. Prompts, cast, pins, and model settings stay.")) return;
     setBanner(null);
     setNotices([]);
     setLive("");
@@ -323,7 +323,9 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
         {tab === "world" ? <WorldPanel chat={chat} boot={props.boot} save={save} onBanner={setBanner} /> : null}
         {tab === "prompts" ? <Prompts chat={chat} save={save} onBanner={setBanner} /> : null}
         {tab === "memory" ? <Memory chat={chat} boot={props.boot} save={save} refreshBoot={props.refreshBoot} onBanner={setBanner} /> : null}
-        {tab === "model" ? <Model chat={chat} boot={props.boot} save={save} refreshBoot={props.refreshBoot} onBanner={setBanner} /> : null}
+        <div hidden={tab !== "model"}>
+          <Model chat={chat} boot={props.boot} save={save} refreshBoot={props.refreshBoot} onBanner={setBanner} />
+        </div>
       </aside>
     </div>
   );
@@ -738,49 +740,107 @@ function Memory(props: {
   );
 }
 
+function useTrackedSampler(chatId: string, incoming: SamplerPreset) {
+  const signature = `${chatId}\0${JSON.stringify(incoming)}`;
+  const [sampler, setSampler] = useState(incoming);
+  const [customText, setCustomText] = useState(() => JSON.stringify(incoming.custom ?? {}, null, 2));
+  const [seen, setSeen] = useState(signature);
+  if (seen !== signature) {
+    setSeen(signature);
+    setSampler(incoming);
+    setCustomText(JSON.stringify(incoming.custom ?? {}, null, 2));
+  }
+  return { sampler, setSampler, customText, setCustomText, signature };
+}
+
 function Model(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<string, unknown>) => Promise<Chat>; refreshBoot: () => Promise<void>; onBanner: (text: string | null) => void }) {
-  const [sampler, setSampler] = useState<SamplerPreset>(props.chat.sampler);
-  const [stateSampler, setStateSampler] = useState<SamplerPreset>(props.chat.state_sampler);
-  const [customText, setCustomText] = useState(JSON.stringify(props.chat.sampler.custom ?? {}, null, 2));
-  const [stateCustomText, setStateCustomText] = useState(JSON.stringify(props.chat.state_sampler.custom ?? {}, null, 2));
+  const prose = useTrackedSampler(props.chat.id, props.chat.sampler);
+  const state = useTrackedSampler(props.chat.id, props.chat.state_sampler);
   const [customError, setCustomError] = useState<string | null>(null);
   const [stateCustomError, setStateCustomError] = useState<string | null>(null);
   const [preview, setPreview] = useState("");
   const [models, setModels] = useState<string[]>([]);
-  const connection = props.boot.connections.find((item) => item.id === props.chat.connection_id);
-  useEffect(() => {
-    setSampler(props.chat.sampler);
-    setStateSampler(props.chat.state_sampler);
-    setCustomText(JSON.stringify(props.chat.sampler.custom ?? {}, null, 2));
-    setStateCustomText(JSON.stringify(props.chat.state_sampler.custom ?? {}, null, 2));
+  const [prosePresetId, setProsePresetId] = useState("");
+  const [statePresetId, setStatePresetId] = useState("");
+  const [stateOpen, setStateOpen] = useState(false);
+  const [seenChat, setSeenChat] = useState(props.chat.id);
+  const resetKey = `${prose.signature}\0${state.signature}`;
+  const [seenReset, setSeenReset] = useState(resetKey);
+  if (seenChat !== props.chat.id) {
+    setSeenChat(props.chat.id);
+    setProsePresetId("");
+    setStatePresetId("");
+  }
+  if (seenReset !== resetKey) {
+    setSeenReset(resetKey);
     setCustomError(null);
     setStateCustomError(null);
-  }, [props.chat.id]);
+  }
+  const connection = props.boot.connections.find((item) => item.id === props.chat.connection_id);
+  const stateConnection = props.boot.connections.find((item) => item.id === props.chat.state_connection_id) ?? connection;
 
-  async function saveModel(nextSampler = sampler) {
-    const error = validateCustom(customText) || validateCustom(stateCustomText);
+  function proseSampler(): SamplerPreset {
+    return { ...prose.sampler, custom: customFromText(prose.customText) };
+  }
+
+  function stateSampler(): SamplerPreset {
+    return { ...state.sampler, custom: customFromText(state.customText) };
+  }
+
+  async function saveProse() {
+    const error = validateCustom(prose.customText);
     if (error) {
       props.onBanner(error);
       return;
     }
-    const withCustom = { ...nextSampler, custom: customFromText(customText) };
-    const stateWithCustom = { ...stateSampler, custom: customFromText(stateCustomText) };
+    const withCustom = proseSampler();
     const context = connection?.kind === "ollama" ? withCustom.num_ctx : props.chat.context_tokens;
     try {
-      await props.save({
-        sampler: withCustom,
-        state_sampler: stateWithCustom,
-        context_tokens: context,
-        model: props.chat.model,
-        connection_id: props.chat.connection_id,
-        state_connection_id: props.chat.state_connection_id,
-        state_model: props.chat.state_model,
-        hold_state_updates: props.chat.hold_state_updates,
-      });
-      setSampler(withCustom);
-      setStateSampler(stateWithCustom);
+      await props.save({ sampler: withCustom, context_tokens: context });
+      props.onBanner("Saved the story sampler.");
     } catch (caught) {
-      props.onBanner(caught instanceof Error ? caught.message : "Could not save the model settings.");
+      props.onBanner(caught instanceof Error ? caught.message : "Could not save the story sampler.");
+    }
+  }
+
+  async function saveState() {
+    const error = validateCustom(state.customText);
+    if (error) {
+      props.onBanner(error);
+      return;
+    }
+    try {
+      await props.save({ state_sampler: stateSampler() });
+      props.onBanner("Saved the state sampler.");
+    } catch (caught) {
+      props.onBanner(caught instanceof Error ? caught.message : "Could not save the state sampler.");
+    }
+  }
+
+  async function applyPreset(preset: Preset, which: "prose" | "state") {
+    const next = preset.sampler;
+    const text = JSON.stringify(next.custom ?? {}, null, 2);
+    if (which === "prose") {
+      flushSync(() => {
+        prose.setSampler(next);
+        prose.setCustomText(text);
+        setProsePresetId(preset.id);
+        setCustomError(null);
+      });
+    } else {
+      flushSync(() => {
+        state.setSampler(next);
+        state.setCustomText(text);
+        setStatePresetId(preset.id);
+        setStateCustomError(null);
+        setStateOpen(true);
+      });
+    }
+    try {
+      await props.save(which === "prose" ? { sampler: next } : { state_sampler: next });
+      props.onBanner(`Loaded ${preset.name}.`);
+    } catch (caught) {
+      props.onBanner(caught instanceof Error ? caught.message : "Could not load the preset.");
     }
   }
 
@@ -846,23 +906,27 @@ function Model(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<string
         Context budget{connection?.kind === "ollama" ? " (num_ctx)" : ""}
         <input
           type="number"
-          value={connection?.kind === "ollama" ? sampler.num_ctx : props.chat.context_tokens}
+          value={connection?.kind === "ollama" ? prose.sampler.num_ctx : props.chat.context_tokens}
           onChange={(event) => {
             const value = Number(event.target.value);
-            if (connection?.kind === "ollama") setSampler({ ...sampler, num_ctx: value });
-            else void props.save({ context_tokens: value });
+            if (connection?.kind === "ollama") {
+              setProsePresetId("");
+              prose.setSampler({ ...prose.sampler, num_ctx: value });
+            } else void props.save({ context_tokens: value });
           }}
         />
       </label>
       <label className="field">
         Load prose preset
         <select
-          value=""
+          value={prosePresetId}
           onChange={(event) => {
             const preset = props.boot.presets.find((item) => item.id === event.target.value);
-            if (!preset) return;
-            setSampler(preset.sampler);
-            setCustomText(JSON.stringify(preset.sampler.custom ?? {}, null, 2));
+            if (!preset) {
+              setProsePresetId("");
+              return;
+            }
+            void applyPreset(preset, "prose");
           }}
         >
           <option value="">Choose</option>
@@ -870,31 +934,54 @@ function Model(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<string
         </select>
       </label>
       <SamplerForm
-        sampler={sampler}
+        sampler={prose.sampler}
+        section="story"
         kind={connection?.kind ?? "mock"}
         extraSamplers={Boolean(connection?.extra_samplers)}
-        onChange={setSampler}
-        customText={customText}
+        onChange={(next) => {
+          setProsePresetId("");
+          prose.setSampler(next);
+        }}
+        customText={prose.customText}
         onCustomText={(text, error) => {
-          setCustomText(text);
+          setProsePresetId("");
+          prose.setCustomText(text);
           setCustomError(error);
         }}
       />
       {customError ? <div className="banner">{customError}</div> : null}
-      <button className="primary" type="button" disabled={Boolean(customError)} onClick={() => void saveModel()}>Save sampler</button>
-      <PresetSave sampler={sampler} customText={customText} purpose="prose" refreshBoot={props.refreshBoot} onBanner={props.onBanner} />
-      <details>
+      <button className="primary" type="button" disabled={Boolean(customError)} onClick={() => void saveProse()}>Save story sampler</button>
+      <PresetSave
+        sampler={prose.sampler}
+        customText={prose.customText}
+        purpose="prose"
+        presets={props.boot.presets}
+        refreshBoot={props.refreshBoot}
+        onBanner={props.onBanner}
+        onSaved={async (preset) => {
+          flushSync(() => {
+            prose.setSampler(preset.sampler);
+            prose.setCustomText(JSON.stringify(preset.sampler.custom ?? {}, null, 2));
+            setProsePresetId(preset.id);
+            setCustomError(null);
+          });
+          await props.save({ sampler: preset.sampler });
+          props.onBanner(`Saved the story preset “${preset.name}”.`);
+        }}
+      />
+      <details open={stateOpen} onToggle={(event) => setStateOpen(event.currentTarget.open)}>
         <summary>State sampler</summary>
         <label className="field">
           Load state preset
           <select
-            value=""
+            value={statePresetId}
             onChange={(event) => {
               const preset = props.boot.presets.find((item) => item.id === event.target.value);
-              if (!preset) return;
-              setStateSampler(preset.sampler);
-              setStateCustomText(JSON.stringify(preset.sampler.custom ?? {}, null, 2));
-              setStateCustomError(null);
+              if (!preset) {
+                setStatePresetId("");
+                return;
+              }
+              void applyPreset(preset, "state");
             }}
           >
             <option value="">Choose</option>
@@ -902,31 +989,55 @@ function Model(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<string
           </select>
         </label>
         <SamplerForm
-          sampler={stateSampler}
-          kind={connection?.kind ?? "mock"}
-          extraSamplers={Boolean(connection?.extra_samplers)}
-          onChange={setStateSampler}
-          customText={stateCustomText}
+          sampler={state.sampler}
+          section="state"
+          kind={stateConnection?.kind ?? "mock"}
+          extraSamplers={Boolean(stateConnection?.extra_samplers)}
+          onChange={(next) => {
+            setStatePresetId("");
+            state.setSampler(next);
+          }}
+          customText={state.customText}
           onCustomText={(text, error) => {
-            setStateCustomText(text);
+            setStatePresetId("");
+            state.setCustomText(text);
             setStateCustomError(error);
           }}
         />
         {stateCustomError ? <div className="banner">{stateCustomError}</div> : null}
-        <PresetSave sampler={stateSampler} customText={stateCustomText} purpose="state" refreshBoot={props.refreshBoot} onBanner={props.onBanner} />
+        <button className="primary" type="button" disabled={Boolean(stateCustomError)} onClick={() => void saveState()}>Save state sampler</button>
+        <PresetSave
+          sampler={state.sampler}
+          customText={state.customText}
+          purpose="state"
+          presets={props.boot.presets}
+          refreshBoot={props.refreshBoot}
+          onBanner={props.onBanner}
+          onSaved={async (preset) => {
+            flushSync(() => {
+              state.setSampler(preset.sampler);
+              state.setCustomText(JSON.stringify(preset.sampler.custom ?? {}, null, 2));
+              setStatePresetId(preset.id);
+              setStateCustomError(null);
+              setStateOpen(true);
+            });
+            await props.save({ state_sampler: preset.sampler });
+            props.onBanner(`Saved the state preset “${preset.name}”.`);
+          }}
+        />
       </details>
       <button
         className="ghost"
         type="button"
         onClick={() => {
-          const error = validateCustom(customText);
+          const error = validateCustom(prose.customText);
           if (error) {
             props.onBanner(error);
             return;
           }
           void api<{ body: unknown; applied: string[]; dropped: string[] }>(`/api/chats/${props.chat.id}/preview`, {
             method: "POST",
-            body: JSON.stringify({ sampler: { ...sampler, custom: customFromText(customText) }, context_tokens: connection?.kind === "ollama" ? sampler.num_ctx : props.chat.context_tokens }),
+            body: JSON.stringify({ sampler: proseSampler(), context_tokens: connection?.kind === "ollama" ? prose.sampler.num_ctx : props.chat.context_tokens }),
           }).then((result) => {
             setPreview(`${JSON.stringify(result.body, null, 2)}\n\nSent: ${result.applied.join(", ")}\n\nNot sent: ${result.dropped.join(", ")}`);
           }).catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "Preview failed."));
@@ -939,27 +1050,39 @@ function Model(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<string
   );
 }
 
-function PresetSave(props: { sampler: SamplerPreset; customText: string; purpose: "prose" | "state"; refreshBoot: () => Promise<void>; onBanner: (text: string | null) => void }) {
+function PresetSave(props: {
+  sampler: SamplerPreset;
+  customText: string;
+  purpose: "prose" | "state";
+  presets: Preset[];
+  refreshBoot: () => Promise<void>;
+  onBanner: (text: string | null) => void;
+  onSaved: (preset: Preset) => Promise<void>;
+}) {
   const [name, setName] = useState("");
   return (
     <div className="row">
-      <input value={name} placeholder="Preset name" onChange={(event) => setName(event.target.value)} />
+      <input value={name} placeholder="Preset name" aria-label={props.purpose === "state" ? "State preset name" : "Story preset name"} onChange={(event) => setName(event.target.value)} />
       <button
         className="ghost"
         type="button"
         onClick={() => {
           const error = validateCustom(props.customText);
-          if (error || !name.trim()) {
+          const trimmed = name.trim();
+          if (error || !trimmed) {
             props.onBanner(error || "Name the preset.");
             return;
           }
-          void api("/api/presets", {
-            method: "POST",
-            body: JSON.stringify({ name, purpose: props.purpose, sampler: { ...props.sampler, custom: customFromText(props.customText) } }),
-          })
-            .then(async () => {
+          const sampler = { ...props.sampler, custom: customFromText(props.customText) };
+          const existing = props.presets.find((preset) => preset.purpose === props.purpose && preset.name === trimmed);
+          const request = existing
+            ? api<Preset>(`/api/presets/${existing.id}`, { method: "PUT", body: JSON.stringify({ name: trimmed, purpose: props.purpose, sampler }) })
+            : api<Preset>("/api/presets", { method: "POST", body: JSON.stringify({ name: trimmed, purpose: props.purpose, sampler }) });
+          void request
+            .then(async (saved) => {
               setName("");
               await props.refreshBoot();
+              await props.onSaved(saved);
             })
             .catch((caught: unknown) => props.onBanner(caught instanceof Error ? caught.message : "Could not save the preset."));
         }}

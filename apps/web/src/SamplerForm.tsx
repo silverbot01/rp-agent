@@ -5,7 +5,7 @@ import {
   type SamplerFieldKey,
   type SamplerPreset,
 } from "@rp/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const KIND_LABEL: Record<ConnectionKind, string> = {
   spacexai: "SpaceXAI",
@@ -23,10 +23,11 @@ export function SamplerForm(props: {
   extraSamplers: boolean;
   customText: string;
   onCustomText: (text: string, error: string | null) => void;
+  section: "story" | "state";
 }) {
   const groups = ["common", "dry", "ollama"] as const;
   return (
-    <div>
+    <div data-sampler={props.section}>
       {groups.map((group) => (
         <section key={group}>
           <h3 className="group-title">{group === "dry" ? "DRY" : group === "ollama" ? "Ollama" : "Common"}</h3>
@@ -142,22 +143,41 @@ function FieldControl(props: {
   );
 }
 
+function formatLines(widget: string, value: string[] | number[]): string {
+  return value.map(String).join(widget === "ints" ? ", " : "\n");
+}
+
+function parseLines(widget: string, text: string): string[] | number[] {
+  if (widget === "ints") {
+    return text.split(/[,\s]+/).filter(Boolean).map((item) => Number(item)).filter((item) => !Number.isNaN(item));
+  }
+  return text.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
 function LinesControl(props: { widget: string; value: unknown; onCommit: (value: string[] | number[]) => void }) {
-  const initial = Array.isArray(props.value) ? props.value.map(String).join(props.widget === "ints" ? ", " : "\n") : "";
+  const initial = Array.isArray(props.value) ? formatLines(props.widget, props.value as string[] | number[]) : "";
   const [text, setText] = useState(initial);
-  useEffect(() => setText(initial), [initial]);
+  const echo = useRef(initial);
+  useEffect(() => {
+    if (initial === echo.current) return;
+    echo.current = initial;
+    setText(initial);
+  }, [initial]);
+
+  function commit(next: string) {
+    const parsed = parseLines(props.widget, next);
+    echo.current = formatLines(props.widget, parsed);
+    props.onCommit(parsed);
+  }
+
   return (
     <textarea
       rows={props.widget === "ints" ? 2 : 3}
       value={text}
-      onChange={(event) => setText(event.target.value)}
-      onBlur={() => {
-        if (props.widget === "ints") {
-          const numbers = text.split(/[,\s]+/).map((item) => Number(item)).filter((item) => !Number.isNaN(item));
-          props.onCommit(numbers);
-          return;
-        }
-        props.onCommit(text.split("\n").map((line) => line.trim()).filter(Boolean));
+      onChange={(event) => {
+        const next = event.target.value;
+        setText(next);
+        commit(next);
       }}
     />
   );

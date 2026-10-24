@@ -48,7 +48,7 @@ Prompt blocks, in default order: main, pre-history, world, world dynamic, charac
 
 Main, pre-history, and post-history are text you write. Character and world blocks are rendered from the sheets. Templates support `{{field}}` and `{{#if field}}...{{/if}}`.
 
-Each past line has Edit and Delete, for your messages and for replies. Changing or removing a line leaves the sheets as they are. Restart, under the composer, clears the transcript and play memories and puts clothing, emotion, weather, and the other dynamic fields back to the character and world cards. Prompts, the cast, who you play, and pins stay. The opening line is added again.
+Each past line has Edit and Delete, for your messages and for replies. Changing or removing a line leaves the sheets as they are. Restart, under the composer, clears the transcript and play memories and puts clothing, emotion, weather, and the other dynamic fields back to the character and world cards. Prompts, the cast, who you play, pins, and the model page stay. That includes the connection, model, context size, and both samplers. The opening line is added again.
 
 After each reply, a state update (the same model, or a connection chosen on the Model tab) returns a JSON patch. It can change clothing, emotion, posture, location, inventory, injuries, goals, notes, custom fields, world time, weather, place, atmosphere, ongoing events, and the chronicle. Pin a field on the sheet to keep the model from changing it. **Hold state updates** stores the patch until you apply or discard it.
 
