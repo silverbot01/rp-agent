@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   assemble,
   bytesToVector,
+  castRoles,
   characterSection,
   composePreHistory,
   loreBlock,
@@ -40,7 +41,17 @@ export async function preparePrompt(db: DatabaseSync, chat: ChatDetail, signal?:
   const characters = listCharacters(db);
   const byId = new Map(characters.map((character) => [character.id, character]));
   const world = chat.world_id ? getWorld(db, chat.world_id) : null;
-  const names = chat.cast.map((id) => byId.get(id)?.name).filter((name): name is string => Boolean(name));
+  const cast = chat.cast.flatMap((id) => {
+    const card = byId.get(id);
+    return card ? [{ id, name: card.name }] : [];
+  });
+  const roles = castRoles({
+    cast,
+    playerCharacterId: chat.player_character_id,
+    personaName: chat.persona_name,
+    narratorEnabled: chat.narrator_enabled,
+  });
+  const names = cast.map((character) => character.name);
   const recent = chat.messages
     .slice(-2)
     .map((message) => message.content)
@@ -51,6 +62,7 @@ export async function preparePrompt(db: DatabaseSync, chat: ChatDetail, signal?:
     if (!card) return [];
     const dynamic = chat.sheets.characters[id]?.dynamic ?? card.initial_dynamic;
     return [{
+      id,
       name: card.name,
       description: card.description,
       personality: card.personality,
@@ -60,12 +72,18 @@ export async function preparePrompt(db: DatabaseSync, chat: ChatDetail, signal?:
       dynamic,
     }];
   });
+  const playerCards = cards.filter((card) => card.id === roles.playerId);
+  const otherCards = cards.filter((card) => card.id !== roles.playerId);
+  const characterText = [
+    playerCards.length ? `The user is playing as:\n${characterSection(playerCards)}` : "",
+    otherCards.length ? `Other characters:\n${characterSection(otherCards)}` : "",
+  ].filter(Boolean).join("\n\n");
   const texts = {
-    main: chat.main_prompt,
-    pre_history: composePreHistory(chat.pre_history, chat.persona_name, chat.persona_description),
+    main: [chat.main_prompt.trim(), roles.stance].filter(Boolean).join("\n\n"),
+    pre_history: composePreHistory(chat.pre_history, roles.playerName, roles.playerId ? "" : chat.persona_description),
     world_static: world ? worldStaticText(world.name, world.description) : "",
     world_dynamic: world ? worldDynamicText(world.dynamic_template, chat.sheets.world.dynamic) : "",
-    characters: characterSection(cards),
+    characters: characterText,
     lore: loreBlock(lore.included),
     post_history: chat.post_history,
   };
@@ -78,7 +96,8 @@ export async function preparePrompt(db: DatabaseSync, chat: ChatDetail, signal?:
     disabled: chat.disabled_blocks,
     contextTokens: chat.context_tokens,
     outputReserve: reserve,
-    personaName: chat.persona_name,
+    personaName: roles.playerName,
+    replyName: roles.replyName,
     texts,
     history,
   };

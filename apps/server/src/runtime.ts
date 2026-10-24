@@ -104,8 +104,12 @@ export async function streamProse(input: CallInput, onToken: (text: string) => v
   if (input.signal?.aborted) throw new AbortedError();
   if (input.kind === "mock") {
     const text = mockProse(input.messages);
-    const size = Math.max(1, Math.ceil(text.length / 3));
-    for (let i = 0; i < text.length; i += size) onToken(text.slice(i, i + size));
+    const parts = text.match(/\S+\s*/g) ?? [text];
+    for (const part of parts) {
+      if (input.signal?.aborted) throw new AbortedError();
+      onToken(part);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
     return { promptTokens: Math.ceil(input.prompt.length / 4), completionTokens: Math.ceil(text.length / 4) };
   }
   const built = buildChatBody({ ...input, stream: true });
@@ -145,7 +149,7 @@ async function readStream(kind: ConnectionKind, response: Response, onToken: (te
   const decoder = new TextDecoder();
   let buffer = "";
   const usage: Usage = {};
-  const consume = (line: string) => {
+  const consume = async (line: string) => {
     const trimmed = line.replace(/\r$/, "");
     if (!trimmed || trimmed.startsWith("event:") || trimmed.startsWith(":")) return;
     const payload = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
@@ -159,7 +163,10 @@ async function readStream(kind: ConnectionKind, response: Response, onToken: (te
     if (kind === "ollama") {
       const message = json.message as { content?: unknown } | undefined;
       const token = textOf(message?.content);
-      if (token) onToken(token);
+      if (token) {
+        onToken(token);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
       if (json.done === true) {
         if (typeof json.prompt_eval_count === "number") usage.promptTokens = json.prompt_eval_count;
         if (typeof json.eval_count === "number") usage.completionTokens = json.eval_count;
@@ -168,13 +175,19 @@ async function readStream(kind: ConnectionKind, response: Response, onToken: (te
     }
     if (kind === "kobold") {
       const token = typeof json.token === "string" ? json.token : "";
-      if (token) onToken(token);
+      if (token) {
+        onToken(token);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
       return;
     }
     const choices = Array.isArray(json.choices) ? json.choices : [];
     const choice = choices[0] as { delta?: { content?: unknown }; message?: { content?: unknown } } | undefined;
     const token = textOf(choice?.delta?.content ?? choice?.message?.content);
-    if (token) onToken(token);
+    if (token) {
+      onToken(token);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
     const reported = json.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
     if (reported?.prompt_tokens) usage.promptTokens = reported.prompt_tokens;
     if (reported?.completion_tokens) usage.completionTokens = reported.completion_tokens;
@@ -190,12 +203,12 @@ async function readStream(kind: ConnectionKind, response: Response, onToken: (te
       buffer += decoder.decode(value, { stream: true });
       let index = buffer.indexOf("\n");
       while (index >= 0) {
-        consume(buffer.slice(0, index));
+        await consume(buffer.slice(0, index));
         buffer = buffer.slice(index + 1);
         index = buffer.indexOf("\n");
       }
     }
-    if (buffer.trim()) consume(buffer);
+    if (buffer.trim()) await consume(buffer);
   } catch (error) {
     if (error instanceof AbortedError) throw error;
     asAbort(error, signal);

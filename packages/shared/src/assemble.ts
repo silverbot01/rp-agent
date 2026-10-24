@@ -19,6 +19,7 @@ export type AssembleInput = {
   outputReserve: number;
   memoryBudget: number;
   personaName: string;
+  replyName?: string;
   texts: Partial<Record<Exclude<BlockId, "history" | "memories">, string>>;
   memoryCandidates: MemoryCandidate[];
   history: HistoryMessage[];
@@ -46,13 +47,14 @@ function formatMemories(texts: string[]): string {
   return `Relevant memory:\n${texts.map((text) => `- ${text}`).join("\n")}`;
 }
 
-function historyLine(message: HistoryMessage, personaName: string): string {
-  const speaker = message.role === "user" ? personaName || "You" : "Narrator";
+function historyLine(message: HistoryMessage, personaName: string, replyName: string): string {
+  const speaker = message.role === "user" ? personaName || "You" : replyName || "Narrator";
   return `${speaker}: ${message.content}`;
 }
 
 export function assemble(input: AssembleInput): AssembleResult {
   const estimate = input.estimate ?? estimateTokens;
+  const replyName = input.replyName?.trim() || "Narrator";
   const disabled = new Set(input.disabled);
   const order = input.order.length ? input.order : [...BLOCK_IDS];
   const historyIndex = Math.max(0, order.indexOf("history"));
@@ -101,7 +103,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     for (let i = input.history.length - 1; i >= 0; i--) {
       const message = input.history[i];
       if (!message) continue;
-      const cost = estimate(historyLine(message, input.personaName));
+      const cost = estimate(historyLine(message, input.personaName, replyName));
       const isNewest = i === input.history.length - 1;
       // Keep a contiguous tail. The newest message stays even when it overflows,
       // so the model still sees the turn that was just sent.
@@ -141,9 +143,9 @@ export function assemble(input: AssembleInput): AssembleResult {
 
   const promptParts: string[] = [];
   if (systemText) promptParts.push(systemText);
-  if (kept.length) promptParts.push(kept.map((message) => historyLine(message, input.personaName)).join("\n\n"));
+  if (kept.length) promptParts.push(kept.map((message) => historyLine(message, input.personaName, replyName)).join("\n\n"));
   if (trailingText) promptParts.push(trailingText);
-  promptParts.push("Narrator:");
+  promptParts.push(`${replyName}:`);
 
   const estimatedTokens = fixedTokens + memoryTokens + historyTokens;
   return {

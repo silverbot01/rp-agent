@@ -122,6 +122,8 @@ export type ChatPublic = {
   rag_enabled: boolean;
   memory_budget_tokens: number;
   hold_state_updates: boolean;
+  narrator_enabled: boolean;
+  player_character_id: string | null;
   cast: string[];
   sheets: ChatSheets;
   last_retrieval: { id: string; text: string }[];
@@ -180,6 +182,8 @@ type ChatPatch = {
   rag_enabled?: boolean;
   memory_budget_tokens?: number;
   hold_state_updates?: boolean;
+  narrator_enabled?: boolean;
+  player_character_id?: string | null;
   cast?: string[];
   sheets?: ChatSheets;
   last_retrieval?: { id: string; text: string }[];
@@ -317,6 +321,8 @@ function chatFromRow(row: Record<string, unknown>): ChatPublic {
     rag_enabled: Boolean(row.rag_enabled),
     memory_budget_tokens: Number(row.memory_budget_tokens ?? 800),
     hold_state_updates: Boolean(row.hold_state_updates),
+    narrator_enabled: Boolean(row.narrator_enabled),
+    player_character_id: row.player_character_id && cast.includes(String(row.player_character_id)) ? String(row.player_character_id) : null,
     cast,
     sheets: sheetsFromParts(String(row.character_state_json ?? "{}"), String(row.world_state_json ?? "{}")),
     last_retrieval: retrieval,
@@ -685,10 +691,12 @@ export function createChat(db: DatabaseSync, input: Record<string, unknown>): Ch
   const cast = Array.isArray(input.cast) ? input.cast.filter((id): id is string => typeof id === "string") : [];
   const sheets = emptySheets();
   if (world) sheets.world.dynamic = normalizeWorldDynamic(world.initial_dynamic);
+  const playerId = typeof input.player_character_id === "string" && cast.includes(input.player_character_id) ? input.player_character_id : null;
   let greeting = "";
   for (const characterId of cast) {
     const character = getCharacter(db, characterId);
     sheets.characters[characterId] = { dynamic: normalizeCharacterDynamic(character.initial_dynamic), pins: [] };
+    if (characterId === playerId) continue;
     if (!greeting && character.greeting.trim()) greeting = character.greeting.trim();
   }
   const connectionId = input.connection_id === undefined ? "conn-mock" : input.connection_id ? String(input.connection_id) : null;
@@ -702,12 +710,13 @@ export function createChat(db: DatabaseSync, input: Record<string, unknown>): Ch
     `INSERT INTO chats (
       id, title, world_id, connection_id, model, state_connection_id, state_model, sampler_json, state_sampler_json,
       persona_name, persona_description, main_prompt, pre_history, post_history, state_instructions, block_order_json,
-      disabled_blocks_json, context_tokens, rag_enabled, memory_budget_tokens, hold_state_updates, cast_json,
+      disabled_blocks_json, context_tokens, rag_enabled, memory_budget_tokens, hold_state_updates, narrator_enabled,
+      player_character_id, cast_json,
       character_state_json, world_state_json, last_retrieval_json, last_prompt_tokens, last_state_error, created_at, updated_at
     ) VALUES (
       :id, :title, :world_id, :connection_id, :model, NULL, '', :sampler_json, :state_sampler_json,
       :persona_name, '', :main_prompt, :pre_history, :post_history, :state_instructions, :block_order_json,
-      '[]', :context_tokens, 0, 800, 0, :cast_json,
+      '[]', :context_tokens, 0, 800, 0, :narrator_enabled, :player_character_id, :cast_json,
       :character_state_json, :world_state_json, '[]', NULL, NULL, :created_at, :updated_at
     )`,
   ).run({
@@ -725,6 +734,8 @@ export function createChat(db: DatabaseSync, input: Record<string, unknown>): Ch
     state_instructions: DEFAULT_STATE_INSTRUCTIONS,
     block_order_json: JSON.stringify(normalizeOrder(undefined)),
     context_tokens: defaultSampler().num_ctx,
+    narrator_enabled: input.narrator_enabled ? 1 : 0,
+    player_character_id: playerId,
     cast_json: JSON.stringify(cast),
     character_state_json: JSON.stringify(sheets.characters),
     world_state_json: JSON.stringify(sheets.world),
@@ -752,6 +763,9 @@ export function updateChat(db: DatabaseSync, id: string, raw: Record<string, unk
   }
   let cast = patch.cast ?? current.cast;
   cast = cast.filter((characterId, index) => cast.indexOf(characterId) === index);
+  let playerId = patch.player_character_id === undefined ? current.player_character_id : patch.player_character_id;
+  if (playerId && !cast.includes(playerId)) playerId = null;
+  const narratorEnabled = patch.narrator_enabled === undefined ? current.narrator_enabled : Boolean(patch.narrator_enabled);
   for (const characterId of cast) {
     const character = getCharacter(db, characterId);
     if (!sheets.characters[characterId]) {
@@ -787,6 +801,7 @@ export function updateChat(db: DatabaseSync, id: string, raw: Record<string, unk
       main_prompt=:main_prompt, pre_history=:pre_history, post_history=:post_history, state_instructions=:state_instructions,
       block_order_json=:block_order_json, disabled_blocks_json=:disabled_blocks_json, context_tokens=:context_tokens,
       rag_enabled=:rag_enabled, memory_budget_tokens=:memory_budget_tokens, hold_state_updates=:hold_state_updates,
+      narrator_enabled=:narrator_enabled, player_character_id=:player_character_id,
       cast_json=:cast_json, character_state_json=:character_state_json, world_state_json=:world_state_json,
       last_retrieval_json=:last_retrieval_json, last_prompt_tokens=:last_prompt_tokens, last_state_error=:last_state_error,
       updated_at=:updated_at
@@ -813,6 +828,8 @@ export function updateChat(db: DatabaseSync, id: string, raw: Record<string, unk
     rag_enabled: patch.rag_enabled === undefined ? (current.rag_enabled ? 1 : 0) : patch.rag_enabled ? 1 : 0,
     memory_budget_tokens: patch.memory_budget_tokens === undefined ? current.memory_budget_tokens : Math.max(0, Math.floor(patch.memory_budget_tokens)),
     hold_state_updates: patch.hold_state_updates === undefined ? (current.hold_state_updates ? 1 : 0) : patch.hold_state_updates ? 1 : 0,
+    narrator_enabled: narratorEnabled ? 1 : 0,
+    player_character_id: playerId,
     cast_json: JSON.stringify(cast),
     character_state_json: JSON.stringify(sheets.characters),
     world_state_json: JSON.stringify(sheets.world),
@@ -1182,6 +1199,8 @@ function importChat(db: DatabaseSync, record: Record<string, unknown>) {
   if (typeof record.rag_enabled === "boolean") patch.rag_enabled = record.rag_enabled;
   if (typeof record.memory_budget_tokens === "number") patch.memory_budget_tokens = record.memory_budget_tokens;
   if (typeof record.hold_state_updates === "boolean") patch.hold_state_updates = record.hold_state_updates;
+  if (typeof record.narrator_enabled === "boolean") patch.narrator_enabled = record.narrator_enabled;
+  if (record.player_character_id === null || typeof record.player_character_id === "string") patch.player_character_id = record.player_character_id;
   updateChat(db, chatId, patch);
   const sheets = importedSheets(record.sheets);
   if (sheets) updateChat(db, chatId, { cast, sheets });

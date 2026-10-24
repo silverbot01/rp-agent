@@ -3,7 +3,9 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   DEFAULT_CHARACTER_TEMPLATE,
+  DEFAULT_MAIN_PROMPT,
   DEFAULT_WORLD_TEMPLATE,
+  PREVIOUS_DEFAULT_MAIN_PROMPT,
   SPACEXAI_BASE_URL,
   SPACEXAI_MODEL,
   defaultSampler,
@@ -78,6 +80,8 @@ CREATE TABLE IF NOT EXISTS chats (
   rag_enabled INTEGER NOT NULL DEFAULT 0,
   memory_budget_tokens INTEGER NOT NULL DEFAULT 800,
   hold_state_updates INTEGER NOT NULL DEFAULT 0,
+  narrator_enabled INTEGER NOT NULL DEFAULT 0,
+  player_character_id TEXT,
   cast_json TEXT NOT NULL DEFAULT '[]',
   character_state_json TEXT NOT NULL DEFAULT '{}',
   world_state_json TEXT NOT NULL,
@@ -147,10 +151,22 @@ export function openDatabase(dbPath: string): DatabaseSync {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA);
+  migrate(db);
   const embedder = db.prepare("SELECT id FROM embedder WHERE id = 1").get();
   if (!embedder) db.prepare("INSERT INTO embedder (id, status) VALUES (1, 'idle')").run();
   seed(db);
   return db;
+}
+
+function migrate(db: DatabaseSync) {
+  const columns = db.prepare("PRAGMA table_info(chats)").all() as { name: string }[];
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("narrator_enabled")) db.exec("ALTER TABLE chats ADD COLUMN narrator_enabled INTEGER NOT NULL DEFAULT 0");
+  if (!names.has("player_character_id")) db.exec("ALTER TABLE chats ADD COLUMN player_character_id TEXT");
+  db.prepare("UPDATE chats SET main_prompt = :next WHERE main_prompt = :old").run({
+    old: PREVIOUS_DEFAULT_MAIN_PROMPT,
+    next: DEFAULT_MAIN_PROMPT,
+  });
 }
 
 function seed(db: DatabaseSync) {

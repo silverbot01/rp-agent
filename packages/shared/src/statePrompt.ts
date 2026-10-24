@@ -7,6 +7,8 @@ export function stateUpdatePrompt(input: {
   instructions: string;
   userText: string;
   assistantText: string;
+  userLabel?: string;
+  replyName?: string;
 }): string {
   const characters = Object.entries(input.sheets.characters).map(([id, state]) => ({
     id,
@@ -43,8 +45,8 @@ export function stateUpdatePrompt(input: {
     "Current world:",
     JSON.stringify(world, null, 2),
     "Latest exchange:",
-    `User: ${input.userText}`,
-    `Narrator: ${input.assistantText}`,
+    `${input.userLabel?.trim() || "User"}: ${input.userText}`,
+    `${input.replyName?.trim() || "Narrator"}: ${input.assistantText}`,
     "Instructions:",
     input.instructions.trim() || DEFAULT_STATE_INSTRUCTIONS,
   ].join("\n\n");

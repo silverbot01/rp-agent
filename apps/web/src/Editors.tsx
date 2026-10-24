@@ -294,6 +294,8 @@ export function ChatsPage(props: { boot: Bootstrap; refresh: () => Promise<void>
   const [connectionId, setConnectionId] = useState(mock?.id ?? "");
   const [persona, setPersona] = useState("You");
   const [cast, setCast] = useState<string[]>(props.boot.characters[0] ? [props.boot.characters[0].id] : []);
+  const [narrator, setNarrator] = useState(false);
+  const [playerId, setPlayerId] = useState<string | null>(null);
 
   async function create() {
     props.onError(null);
@@ -305,6 +307,8 @@ export function ChatsPage(props: { boot: Bootstrap; refresh: () => Promise<void>
         connection_id: connectionId || null,
         persona_name: persona,
         cast,
+        narrator_enabled: narrator,
+        player_character_id: playerId && cast.includes(playerId) ? playerId : null,
       }),
     });
     await props.refresh();
@@ -353,13 +357,34 @@ export function ChatsPage(props: { boot: Bootstrap; refresh: () => Promise<void>
             </select>
           </label>
           <div className="field">
-            Cast
+            <span className="group-title">You are playing as</span>
+            <label className="check">
+              <input type="radio" name="new-chat-player" checked={playerId === null} onChange={() => setPlayerId(null)} />
+              Yourself ({persona.trim() || "You"})
+            </label>
+            {props.boot.characters.filter((character) => cast.includes(character.id)).map((character) => (
+              <label className="check" key={character.id}>
+                <input type="radio" name="new-chat-player" checked={playerId === character.id} onChange={() => setPlayerId(character.id)} />
+                {character.name}
+              </label>
+            ))}
+          </div>
+          <div className="field">
+            <span className="group-title">In the scene</span>
+            <label className="check">
+              <input type="checkbox" checked={narrator} onChange={(event) => setNarrator(event.target.checked)} />
+              Narrator
+            </label>
             {props.boot.characters.map((character) => (
               <label className="check" key={character.id}>
                 <input
                   type="checkbox"
                   checked={cast.includes(character.id)}
-                  onChange={(event) => setCast(event.target.checked ? [...cast, character.id] : cast.filter((id) => id !== character.id))}
+                  onChange={(event) => {
+                    const next = event.target.checked ? [...cast, character.id] : cast.filter((id) => id !== character.id);
+                    setCast(next);
+                    if (!event.target.checked && playerId === character.id) setPlayerId(null);
+                  }}
                 />
                 {character.name}
               </label>

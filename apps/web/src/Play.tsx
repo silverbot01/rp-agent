@@ -3,6 +3,7 @@ import {
   BLOCK_IDS,
   CHARACTER_STRING_FIELDS,
   WORLD_STRING_FIELDS,
+  castRoles,
   type BlockId,
   type CharacterDynamic,
   type ChatSheets,
@@ -10,6 +11,7 @@ import {
   type WorldDynamic,
 } from "@rp/shared";
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { api, readNdjson } from "./api.ts";
 import { SamplerForm, customFromText, validateCustom } from "./SamplerForm.tsx";
 import type { Bootstrap, Chat, TurnEvent } from "./types.ts";
@@ -68,9 +70,12 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
         const body = (await response.json()) as { error?: string };
         throw new Error(body.error || response.statusText);
       }
-      await readNdjson(response, (raw) => {
+      await readNdjson(response, async (raw) => {
         const event = raw as TurnEvent;
-        if (event.type === "token" && event.text) setLive((current) => current + event.text);
+        if (event.type === "token" && event.text) {
+          const text = event.text;
+          flushSync(() => setLive((current) => current + text));
+        }
         if (event.type === "done") {
           if (event.notices?.length) setNotices(event.notices);
           if (event.stream_fallback) setNotices((current) => [...current, "This KoboldCPP build returned the reply in one piece."]);
@@ -79,13 +84,14 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
         if (event.type === "error" && event.error) setBanner(event.error);
         if (event.type === "state" && event.notices?.length) setNotices((current) => [...current, ...event.notices!]);
       });
-      setLive("");
       await load();
+      setLive("");
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
         setBanner(error instanceof Error ? error.message : "The turn failed.");
       }
       await load().catch(() => undefined);
+      setLive("");
     } finally {
       setSending(false);
       abort.current = null;
@@ -104,20 +110,28 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
     return next;
   }
 
-  const persona = chat.persona_name || "You";
+  const roles = castRoles({
+    cast: current.cast.map((id) => ({
+      id,
+      name: props.boot.characters.find((character) => character.id === id)?.name || "Character",
+    })),
+    playerCharacterId: current.player_character_id,
+    personaName: current.persona_name,
+    narratorEnabled: current.narrator_enabled,
+  });
   return (
     <div className="workspace">
       <section className="transcript">
         <div className="scroll">
           {chat.messages.map((message) => (
             <article className={`bubble ${message.role}`} key={message.id}>
-              <div className="who">{message.role === "user" ? persona : "Narrator"}</div>
+              <div className="who">{message.role === "user" ? roles.playerName : roles.replyName}</div>
               <div className="body">{message.content}</div>
             </article>
           ))}
           {sending || live ? (
             <article className="bubble assistant">
-              <div className="who">Narrator</div>
+              <div className="who">{roles.replyName}</div>
               <div className="body">{live || "…"}</div>
             </article>
           ) : null}
@@ -140,7 +154,7 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
         >
           <textarea
             value={draft}
-            placeholder="Write your move. Enter sends, Shift+Enter adds a line."
+            placeholder={`Write as ${roles.playerName}. Enter sends, Shift+Enter adds a line.`}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -187,7 +201,42 @@ function Sheets(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<strin
         <input value={props.chat.title} onChange={(event) => void props.save({ title: event.target.value })} />
       </label>
       <div className="field">
-        Cast
+        <span className="group-title">You are playing as</span>
+        <label className="check">
+          <input
+            type="radio"
+            name={`player-${props.chat.id}`}
+            checked={!props.chat.player_character_id}
+            onChange={() => void props.save({ player_character_id: null })}
+          />
+          Yourself ({props.chat.persona_name.trim() || "You"})
+        </label>
+        {props.chat.cast.map((id) => {
+          const character = props.boot.characters.find((item) => item.id === id);
+          if (!character) return null;
+          return (
+            <label className="check" key={id}>
+              <input
+                type="radio"
+                name={`player-${props.chat.id}`}
+                checked={props.chat.player_character_id === id}
+                onChange={() => void props.save({ player_character_id: id })}
+              />
+              {character.name}
+            </label>
+          );
+        })}
+      </div>
+      <div className="field">
+        <span className="group-title">In the scene</span>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={props.chat.narrator_enabled}
+            onChange={(event) => void props.save({ narrator_enabled: event.target.checked })}
+          />
+          Narrator
+        </label>
         {props.boot.characters.map((character) => (
           <label className="check" key={character.id}>
             <input
@@ -197,12 +246,15 @@ function Sheets(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<strin
                 const cast = event.target.checked
                   ? [...props.chat.cast, character.id]
                   : props.chat.cast.filter((id) => id !== character.id);
-                void props.save({ cast });
+                const patch: Record<string, unknown> = { cast };
+                if (!event.target.checked && props.chat.player_character_id === character.id) patch.player_character_id = null;
+                void props.save(patch);
               }}
             />
             {character.name}
           </label>
         ))}
+        <p className="badge">The narrator stays off until you check it. Replies come from the other people in the scene. The model does not write the one you play.</p>
       </div>
       {props.chat.cast.map((id) => {
         const card = props.boot.characters.find((character) => character.id === id);
@@ -413,6 +465,7 @@ function Prompts(props: { chat: Chat; save: (patch: Record<string, unknown>) => 
 
   return (
     <div className="panel">
+      <p className="badge">Your name and persona apply when you are not playing a cast member. Choose who you play on the Sheets tab.</p>
       <label className="field">Your name<input value={persona} onChange={(event) => setPersona(event.target.value)} /></label>
       <label className="field">Persona<textarea value={personaDescription} onChange={(event) => setPersonaDescription(event.target.value)} /></label>
       <label className="field">Main<textarea value={main} onChange={(event) => setMain(event.target.value)} /></label>

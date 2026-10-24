@@ -1,6 +1,6 @@
 # rp-agent
 
-Local roleplay front-end. One narrator model writes the scene. Character sheets and world state change from what happens in play. Memory search is optional.
+Local roleplay front-end. One model writes the next beat of the scene. The narrator starts off, and you choose which cast member you play. Character sheets and world state change from what happens in play. Memory search is optional. Replies appear as they are generated.
 
 The server binds to `127.0.0.1`. There are no accounts. API keys stay in the local database or in the environment. The browser does not receive them.
 
@@ -22,7 +22,7 @@ The database file is `data/rp-agent.db`. Set `RP_DB` to use another path. Set `P
 
 The first database includes:
 
-- **Mock (offline)** — a local narrator that needs no model server
+- **Mock (offline)** — local replies that need no model server. The narrator starts off.
 - **Mara** — clothing starts as an oilskin cloak, emotion calm
 - **The Gate Road** — late afternoon, clear weather, the north gate
 
@@ -42,7 +42,7 @@ Load model ids from the connection with **Load models**. KoboldCPP cannot embed.
 
 ## Prompts and sheets
 
-Prompt blocks, in default order: main, pre-history, world, world dynamic, characters, lore, memories, history, post-history. Blocks can be turned off and reordered on the Prompts tab. Your name and description are composed into pre-history.
+Prompt blocks, in default order: main, pre-history, world, world dynamic, characters, lore, memories, history, post-history. Blocks can be turned off and reordered on the Prompts tab. Your name and description are composed into pre-history when you are playing yourself. On the Sheets tab, check Narrator to have the model narrate, and choose which cast member you play. The model does not write that person's actions, dialogue, or thoughts. With the narrator off, the reply is labeled with the other people in the scene.
 
 Main, pre-history, and post-history are text you write. Character and world blocks are rendered from the sheets. Templates support `{{field}}` and `{{#if field}}...{{/if}}`.
 

@@ -87,6 +87,8 @@ export type Chat = {
   rag_enabled: boolean;
   memory_budget_tokens: number;
   hold_state_updates: boolean;
+  narrator_enabled: boolean;
+  player_character_id: string | null;
   cast: string[];
   sheets: ChatSheets;
   last_retrieval: { id: string; text: string }[];

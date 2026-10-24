@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
   buildChatBody,
+  castRoles,
   redactBody,
   reduceState,
   stateUpdatePrompt,
@@ -174,7 +175,7 @@ export async function applyStateUpdate(
   const assistant = [...chat.messages].reverse().find((message) => message.role === "assistant");
   const user = [...chat.messages].reverse().find((message) => message.role === "user");
   if (!assistant || !user) {
-    const error = "A state update needs a user message and a narrator reply.";
+    const error = "A state update needs a user message and a reply.";
     updateChat(db, chatId, { last_state_error: error });
     return { ok: false, error };
   }
@@ -183,12 +184,20 @@ export async function applyStateUpdate(
   if (!stateConnection) return { ok: false, error: "Choose a model connection first." };
   const model = (chat.state_connection_id ? chat.state_model : chat.model) || stateConnection.model || "mock";
   const names = Object.fromEntries(listCharacters(db).map((character) => [character.id, character.name]));
+  const roles = castRoles({
+    cast: chat.cast.flatMap((id) => (names[id] ? [{ id, name: names[id] }] : [])),
+    playerCharacterId: chat.player_character_id,
+    personaName: chat.persona_name,
+    narratorEnabled: chat.narrator_enabled,
+  });
   const prompt = stateUpdatePrompt({
     sheets: chat.sheets,
     names,
     instructions: chat.state_instructions,
     userText: user.content,
     assistantText: assistant.content,
+    userLabel: roles.playerName,
+    replyName: roles.replyName,
   });
   let text = "";
   try {

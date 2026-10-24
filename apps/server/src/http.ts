@@ -227,9 +227,11 @@ async function handle(db: ReturnType<typeof openDatabase>, active: Map<string, A
     const body = parts[3] === "turn" ? ((await readJson(req)) as { content?: string }) : {};
     res.writeHead(200, {
       "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-cache, no-transform",
       "X-Accel-Buffering": "no",
     });
+    res.flushHeaders();
+    res.socket?.setNoDelay(true);
     req.on("close", () => {
       if (!res.writableEnded) controller.abort();
     });
@@ -239,7 +241,9 @@ async function handle(db: ReturnType<typeof openDatabase>, active: Map<string, A
         regenerate: parts[3] === "regenerate",
         signal: controller.signal,
         onEvent: (event) => {
-          if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
+          if (res.writableEnded) return;
+          res.write(`${JSON.stringify(event)}\n`);
+          res.socket?.uncork();
         },
       });
     } finally {

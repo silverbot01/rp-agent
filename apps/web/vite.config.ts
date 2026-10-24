@@ -16,7 +16,14 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:8787",
+      "/api": {
+        target: "http://127.0.0.1:8787",
+        configure(proxy) {
+          proxy.on("proxyRes", (_proxyRes, _req, res) => {
+            res.socket?.setNoDelay(true);
+          });
+        },
+      },
     },
   },
 });

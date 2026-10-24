@@ -37,7 +37,12 @@ export const BLOCK_LABELS: Record<BlockId, string> = {
   post_history: "Post-history",
 };
 
-export const DEFAULT_MAIN_PROMPT = `You are the narrator of a roleplay. Write the next beat in prose, in the voice of the scene.
+export const DEFAULT_MAIN_PROMPT = `Write the next beat of the roleplay.
+Stay consistent with the character sheets and the world state. Those sheets describe what is true right now.
+The cast list says who is present, who the user is playing, and whether a narrator is speaking.
+Leave room for the user to act.`;
+
+export const PREVIOUS_DEFAULT_MAIN_PROMPT = `You are the narrator of a roleplay. Write the next beat in prose, in the voice of the scene.
 Stay consistent with the character sheets and the world state. Those sheets describe what is true right now.
 Do not write the user's actions or dialogue. Leave room for them to act.`;
 

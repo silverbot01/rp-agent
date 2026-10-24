@@ -37,3 +37,22 @@ export function worldStaticText(name: string, description: string): string {
 export function worldDynamicText(template: string, dynamic: WorldDynamic): string {
   return renderTemplate(template, worldVars(dynamic));
 }
+
+export function castRoles(input: {
+  cast: { id: string; name: string }[];
+  playerCharacterId: string | null;
+  personaName: string;
+  narratorEnabled: boolean;
+}): { playerId: string | null; playerName: string; otherNames: string[]; replyName: string; stance: string } {
+  const player = input.playerCharacterId ? input.cast.find((character) => character.id === input.playerCharacterId) : undefined;
+  const playerName = player?.name || input.personaName.trim() || "You";
+  const otherNames = input.cast.filter((character) => character.id !== player?.id).map((character) => character.name);
+  const replyName = input.narratorEnabled ? "Narrator" : otherNames.length === 1 ? otherNames[0]! : otherNames.length ? otherNames.join(", ") : "Scene";
+  const others = otherNames.length ? otherNames.join(", ") : "anyone else";
+  const stance = input.narratorEnabled
+    ? `The user is playing as ${playerName}. The narrator is on. Write the scene in prose, including ${others}. Do not write ${playerName}'s actions, dialogue, or thoughts.`
+    : otherNames.length
+      ? `The user is playing as ${playerName}. The narrator is off. Write only what ${others} say and do. Do not narrate, and do not write ${playerName}'s actions, dialogue, or thoughts.`
+      : `The user is playing as ${playerName}. The narrator is off and no other characters are in the scene. Write only a brief reaction from the world. Do not narrate a story, and do not write ${playerName}'s actions, dialogue, or thoughts.`;
+  return { playerId: player?.id ?? null, playerName, otherNames, replyName, stance };
+}

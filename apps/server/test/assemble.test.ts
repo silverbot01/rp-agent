@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   DEFAULT_CHARACTER_TEMPLATE,
   assemble,
+  castRoles,
   normalizeOrder,
   renderTemplate,
   selectLore,
@@ -99,6 +100,48 @@ test("memory budget is taken before history is filled", () => {
   assert.deepEqual(withMemory.usedMemoryIds, ["m1"]);
   assert.deepEqual(withMemory.droppedMessageIds, ["1"]);
   assert.deepEqual(without.droppedMessageIds, []);
+});
+
+test("the reply speaker is the other character when the narrator is off", () => {
+  const roles = castRoles({
+    cast: [{ id: "char-mara", name: "Mara" }],
+    playerCharacterId: null,
+    personaName: "You",
+    narratorEnabled: false,
+  });
+  assert.equal(roles.playerName, "You");
+  assert.equal(roles.replyName, "Mara");
+  assert.equal(roles.stance.includes("The narrator is off"), true);
+  const narrated = castRoles({
+    cast: [{ id: "char-mara", name: "Mara" }],
+    playerCharacterId: "char-mara",
+    personaName: "You",
+    narratorEnabled: true,
+  });
+  assert.equal(narrated.playerName, "Mara");
+  assert.equal(narrated.replyName, "Narrator");
+  const alone = castRoles({
+    cast: [{ id: "char-mara", name: "Mara" }],
+    playerCharacterId: "char-mara",
+    personaName: "You",
+    narratorEnabled: false,
+  });
+  assert.equal(alone.replyName, "Scene");
+  const result = assemble({
+    order: normalizeOrder(undefined),
+    disabled: ["main", "pre_history", "world_static", "world_dynamic", "characters", "lore", "memories", "post_history"],
+    contextTokens: 1000,
+    outputReserve: 0,
+    memoryBudget: 0,
+    personaName: roles.playerName,
+    replyName: roles.replyName,
+    texts: {},
+    memoryCandidates: [],
+    history: [{ id: "1", role: "assistant", content: "Hello" }],
+    estimate,
+  });
+  assert.match(result.prompt, /Mara:\s*$/);
+  assert.equal(result.prompt.includes("Mara: Hello"), true);
 });
 
 test("always and keyword lore are selected, rag lore is held back", () => {

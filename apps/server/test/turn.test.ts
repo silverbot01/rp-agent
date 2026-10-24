@@ -24,8 +24,15 @@ test("a mock turn updates sheets and undo restores them", async () => {
       }),
     });
     assert.equal(created.status, 201);
-    const chat = (await created.json()) as { id: string; sheets: { characters: Record<string, { dynamic: { emotion: string } }>; world: { dynamic: { weather: string } } } };
+    const chat = (await created.json()) as {
+      id: string;
+      narrator_enabled: boolean;
+      player_character_id: string | null;
+      sheets: { characters: Record<string, { dynamic: { emotion: string } }>; world: { dynamic: { weather: string } } };
+    };
     assert.equal(chat.sheets.characters["char-mara"]?.dynamic.emotion, "calm");
+    assert.equal(chat.narrator_enabled, false);
+    assert.equal(chat.player_character_id, null);
 
     const turn = await fetch(`${base}/api/chats/${chat.id}/turn`, {
       method: "POST",
@@ -33,11 +40,35 @@ test("a mock turn updates sheets and undo restores them", async () => {
       body: JSON.stringify({ content: "I pull my hood up against the rain." }),
     });
     assert.equal(turn.status, 200);
-    const events = (await turn.text())
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { type: string; error?: string });
-    assert.equal(events.some((event) => event.type === "token"), true);
+    const reader = turn.body?.getReader();
+    assert.ok(reader);
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let firstTokenAt = 0;
+    let lastTokenAt = 0;
+    const events: { type: string; error?: string }[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index = buffer.indexOf("\n");
+      while (index >= 0) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        if (line) {
+          const event = JSON.parse(line) as { type: string; error?: string };
+          if (event.type === "token") {
+            const now = Date.now();
+            if (!firstTokenAt) firstTokenAt = now;
+            lastTokenAt = now;
+          }
+          events.push(event);
+        }
+        index = buffer.indexOf("\n");
+      }
+    }
+    if (buffer.trim()) events.push(JSON.parse(buffer) as { type: string; error?: string });
+    assert.ok(lastTokenAt - firstTokenAt >= 100, `tokens arrived together (${lastTokenAt - firstTokenAt}ms)`);
     assert.equal(events.some((event) => event.type === "done"), true);
     assert.equal(events.some((event) => event.type === "state"), true);
     assert.equal(events.some((event) => event.type === "error"), false);
