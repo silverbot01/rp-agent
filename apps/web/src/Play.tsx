@@ -10,7 +10,7 @@ import {
   type SamplerPreset,
   type WorldDynamic,
 } from "@rp/shared";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { flushSync } from "react-dom";
 import { api, readNdjson } from "./api.ts";
 import { SamplerForm, customFromText, validateCustom } from "./SamplerForm.tsx";
@@ -28,13 +28,26 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
   const [sending, setSending] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [notices, setNotices] = useState<string[]>([]);
+  const [replyOpen, setReplyOpen] = useState(false);
   const bottom = useRef<HTMLDivElement | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const loadGen = useRef(0);
+  const chatIdRef = useRef(props.chatId);
+  chatIdRef.current = props.chatId;
 
   async function load() {
-    const next = await api<Chat>(`/api/chats/${props.chatId}`);
+    const id = props.chatId;
+    const gen = ++loadGen.current;
+    const next = await api<Chat>(`/api/chats/${id}`);
+    if (gen !== loadGen.current || chatIdRef.current !== id) return next;
     setChat(next);
     return next;
+  }
+
+  function replaceChat(update: (chat: Chat) => Chat) {
+    const id = chatIdRef.current;
+    loadGen.current += 1;
+    setChat((current) => (current && current.id === id ? update(current) : current));
   }
 
   useEffect(() => {
@@ -55,13 +68,31 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
   async function send(regenerate = false) {
     const content = draft.trim();
     if (!regenerate && !content) return;
-    setSending(true);
-    setBanner(null);
-    setNotices([]);
-    setLive("");
-    if (!regenerate) setDraft("");
     const controller = new AbortController();
     abort.current = controller;
+    flushSync(() => {
+      setSending(true);
+      setBanner(null);
+      setNotices([]);
+      setLive("");
+      setReplyOpen(true);
+      if (!regenerate) {
+        setDraft("");
+        replaceChat((currentChat) => ({
+          ...currentChat,
+          messages: [
+            ...currentChat.messages,
+            { id: `pending-${crypto.randomUUID()}`, role: "user", content, created_at: new Date().toISOString() },
+          ],
+        }));
+      } else {
+        replaceChat((currentChat) => {
+          const messages = currentChat.messages.slice();
+          if (messages.at(-1)?.role === "assistant") messages.pop();
+          return { ...currentChat, messages };
+        });
+      }
+    });
     try {
       const response = await fetch(regenerate ? `/api/chats/${current.id}/regenerate` : `/api/chats/${current.id}/turn`, {
         method: "POST",
@@ -77,24 +108,59 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
         const event = raw as TurnEvent;
         if (event.type === "token" && event.text) {
           const text = event.text;
-          flushSync(() => setLive((current) => current + text));
+          flushSync(() => setLive((currentText) => currentText + text));
         }
         if (event.type === "done") {
-          if (event.notices?.length) setNotices(event.notices);
-          if (event.stream_fallback) setNotices((current) => [...current, "This KoboldCPP build returned the reply in one piece."]);
+          const message = event.message;
+          flushSync(() => {
+            setLive("");
+            setReplyOpen(false);
+            if (message) {
+              replaceChat((currentChat) => (
+                currentChat.messages.some((item) => item.id === message.id)
+                  ? currentChat
+                  : { ...currentChat, messages: [...currentChat.messages, message] }
+              ));
+            }
+            if (event.notices?.length) setNotices(event.notices);
+            if (event.stream_fallback) setNotices((currentNotices) => [...currentNotices, "This KoboldCPP build returned the reply in one piece."]);
+          });
+        }
+        if (event.type === "state" && event.revision?.id) {
+          const revision = event.revision;
+          flushSync(() => {
+            replaceChat((currentChat) => ({
+              ...currentChat,
+              sheets: revision.status === "applied" && revision.after ? revision.after : currentChat.sheets,
+              revisions: [
+                {
+                  id: revision.id,
+                  source: revision.source,
+                  status: revision.status,
+                  diff: revision.diff ?? [],
+                  notices: revision.notices ?? [],
+                  error: revision.error ?? null,
+                  created_at: revision.created_at ?? new Date().toISOString(),
+                },
+                ...currentChat.revisions.filter((item) => item.id !== revision.id),
+              ].slice(0, 40),
+            }));
+            if (event.notices?.length) setNotices((currentNotices) => [...currentNotices, ...event.notices!]);
+          });
         }
         if (event.type === "state_error" && event.error) setBanner(event.error);
         if (event.type === "error" && event.error) setBanner(event.error);
-        if (event.type === "state" && event.notices?.length) setNotices((current) => [...current, ...event.notices!]);
       });
       await load();
       setLive("");
+      setReplyOpen(false);
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
         setBanner(error instanceof Error ? error.message : "The turn failed.");
       }
       await load().catch(() => undefined);
       setLive("");
+      setReplyOpen(false);
     } finally {
       setSending(false);
       abort.current = null;
@@ -202,7 +268,7 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
               )}
             </article>
           ))}
-          {sending || live ? (
+          {live || (sending && replyOpen) ? (
             <article className="bubble assistant">
               <div className="who">{roles.replyName}</div>
               <div className="body">{live || "…"}</div>
@@ -263,10 +329,19 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
   );
 }
 
+function useSyncedSheets(incoming: ChatSheets): [ChatSheets, Dispatch<SetStateAction<ChatSheets>>] {
+  const signature = JSON.stringify(incoming);
+  const [sheets, setSheets] = useState(() => structuredClone(incoming));
+  const [seen, setSeen] = useState(signature);
+  if (seen !== signature) {
+    setSeen(signature);
+    setSheets(structuredClone(incoming));
+  }
+  return [sheets, setSheets];
+}
+
 function Sheets(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<string, unknown>) => Promise<Chat>; onBanner: (text: string | null) => void }) {
-  const [sheets, setSheets] = useState<ChatSheets>(props.chat.sheets);
-  const signature = JSON.stringify(props.chat.sheets);
-  useEffect(() => setSheets(structuredClone(props.chat.sheets)), [props.chat.id, signature]);
+  const [sheets, setSheets] = useSyncedSheets(props.chat.sheets);
   const latest = props.chat.revisions[0];
   return (
     <div className="panel">
@@ -396,9 +471,7 @@ function Sheets(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<strin
 }
 
 function WorldPanel(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<string, unknown>) => Promise<Chat>; onBanner: (text: string | null) => void }) {
-  const [sheets, setSheets] = useState(props.chat.sheets);
-  const signature = JSON.stringify(props.chat.sheets);
-  useEffect(() => setSheets(structuredClone(props.chat.sheets)), [props.chat.id, signature]);
+  const [sheets, setSheets] = useSyncedSheets(props.chat.sheets);
   const world = props.boot.worlds.find((item) => item.id === props.chat.world_id);
   const state = sheets.world;
   return (

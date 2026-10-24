@@ -348,6 +348,7 @@ function sendJson(req: IncomingMessage, res: ServerResponse, status: number, bod
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(data),
+    "Cache-Control": "no-store",
   });
   res.end(data);
 }

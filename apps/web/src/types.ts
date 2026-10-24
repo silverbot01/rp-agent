@@ -127,4 +127,15 @@ export type TurnEvent = {
   prompt_tokens?: number | null;
   dropped_messages?: number;
   stream_fallback?: boolean;
+  message?: Message;
+  revision?: {
+    id: string;
+    source: string;
+    status: Revision["status"];
+    diff?: Revision["diff"];
+    notices?: string[];
+    error?: string | null;
+    created_at?: string;
+    after?: ChatSheets;
+  };
 };
