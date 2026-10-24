@@ -198,6 +198,7 @@ const characterPatchSchema = z.object({
     })
     .optional(),
   custom: z.record(z.string(), z.string()).optional(),
+  inventory: z.array(z.string()).optional(),
   inventory_add: z.array(z.string()).optional(),
   inventory_remove: z.array(z.string()).optional(),
 });
@@ -272,6 +273,57 @@ export function extractJsonObject(text: string): string | null {
   return null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return { ...(value as Record<string, unknown>) };
+}
+
+function hoistFields(record: Record<string, unknown>, fields: readonly string[]) {
+  const set = asRecord(record.set) ?? {};
+  for (const field of fields) {
+    if (!(field in record) || field in set) continue;
+    const value = record[field];
+    set[field] = value === null ? "" : value;
+    delete record[field];
+  }
+  for (const [key, value] of Object.entries(set)) {
+    if (value === null) set[key] = "";
+  }
+  if (Object.keys(set).length) record.set = set;
+}
+
+function coerceInventory(record: Record<string, unknown>) {
+  const value = record.inventory;
+  if (typeof value === "string") {
+    record.inventory = value.split(",").map((item) => item.trim()).filter(Boolean);
+  } else if (value === null) {
+    record.inventory = [];
+  }
+}
+
+/** Models often place clothing next to set, or name a character instead of nesting under set. */
+export function coerceStatePatch(raw: unknown): unknown {
+  const root = asRecord(raw);
+  if (!root) return raw;
+  const characters = asRecord(root.characters);
+  if (characters) {
+    for (const [id, value] of Object.entries(characters)) {
+      const record = asRecord(value);
+      if (!record) continue;
+      hoistFields(record, CHARACTER_STRING_FIELDS);
+      coerceInventory(record);
+      characters[id] = record;
+    }
+    root.characters = characters;
+  }
+  const world = asRecord(root.world);
+  if (world) {
+    hoistFields(world, WORLD_STRING_FIELDS);
+    root.world = world;
+  }
+  return root;
+}
+
 export function parseStatePatch(text: string): { ok: true; patch: StatePatch } | { ok: false; error: string } {
   const json = extractJsonObject(text);
   if (!json) return { ok: false, error: "The state model reply had no JSON object." };
@@ -281,7 +333,7 @@ export function parseStatePatch(text: string): { ok: true; patch: StatePatch } |
   } catch {
     return { ok: false, error: "The state model reply was not valid JSON." };
   }
-  const parsed = statePatchSchema.safeParse(raw);
+  const parsed = statePatchSchema.safeParse(coerceStatePatch(raw));
   if (!parsed.success) {
     const detail = parsed.error.issues
       .slice(0, 4)
@@ -290,6 +342,16 @@ export function parseStatePatch(text: string): { ok: true; patch: StatePatch } |
     return { ok: false, error: detail || "The state patch did not match the schema." };
   }
   return { ok: true, patch: parsed.data };
+}
+
+function resolveCharacterId(rawId: string, sheets: ChatSheets, names: Record<string, string>): string | null {
+  if (sheets.characters[rawId]) return rawId;
+  const needle = rawId.trim().toLowerCase();
+  if (!needle) return null;
+  for (const [id, name] of Object.entries(names)) {
+    if (name.trim().toLowerCase() === needle && sheets.characters[id]) return id;
+  }
+  return null;
 }
 
 function pushDiff(diff: DiffEntry[], path: string, label: string, before: string, after: string) {
@@ -339,13 +401,14 @@ export function applyPatch(sheets: ChatSheets, patch: StatePatch, names: Record<
   const diff: DiffEntry[] = [];
   const notices: string[] = [];
 
-  for (const [id, characterPatch] of Object.entries(patch.characters ?? {})) {
-    const state = next.characters[id];
-    if (!state) {
-      notices.push(`Ignored unknown character ${id}.`);
+  for (const [rawId, characterPatch] of Object.entries(patch.characters ?? {})) {
+    const id = resolveCharacterId(rawId, next, names);
+    const state = id ? next.characters[id] : undefined;
+    if (!id || !state) {
+      notices.push(`Ignored unknown character ${rawId}.`);
       continue;
     }
-    const name = names[id] || id;
+    const name = names[id] || rawId;
     const pinned = new Set(state.pins);
     for (const field of CHARACTER_STRING_FIELDS) {
       const value = characterPatch.set?.[field];
@@ -358,20 +421,23 @@ export function applyPatch(sheets: ChatSheets, patch: StatePatch, names: Record<
       pushDiff(diff, `character:${id}:${field}`, `${name} · ${field}`, state.dynamic[field], capped);
       state.dynamic[field] = capped;
     }
-    if (characterPatch.inventory_add || characterPatch.inventory_remove) {
+    if (characterPatch.inventory || characterPatch.inventory_add || characterPatch.inventory_remove) {
       const before = state.dynamic.inventory.join(", ");
       if (!pinned.has("inventory")) {
-        const items = [...state.dynamic.inventory];
-        for (const raw of characterPatch.inventory_add ?? []) {
+        const items = characterPatch.inventory ? [] : [...state.dynamic.inventory];
+        const incoming = characterPatch.inventory ?? characterPatch.inventory_add ?? [];
+        for (const raw of incoming) {
           const item = cap(raw, LIMITS.inventoryItem);
           if (!item || items.includes(item)) continue;
           if (items.length >= LIMITS.inventory) break;
           items.push(item);
         }
-        for (const raw of characterPatch.inventory_remove ?? []) {
-          const item = cap(raw, LIMITS.inventoryItem);
-          const index = items.indexOf(item);
-          if (index >= 0) items.splice(index, 1);
+        if (!characterPatch.inventory) {
+          for (const raw of characterPatch.inventory_remove ?? []) {
+            const item = cap(raw, LIMITS.inventoryItem);
+            const index = items.indexOf(item);
+            if (index >= 0) items.splice(index, 1);
+          }
         }
         state.dynamic.inventory = items;
         pushDiff(diff, `character:${id}:inventory`, `${name} · inventory`, before, items.join(", "));

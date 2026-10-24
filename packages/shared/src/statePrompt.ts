@@ -40,6 +40,7 @@ export function stateUpdatePrompt(input: {
       2,
     ),
     "Omit fields that did not change. Do not change pinned fields.",
+    "The user's message already happened. If clothing is taken off and nothing new is named, set clothing to an empty string. An empty string clears a text field.",
     "Current characters:",
     JSON.stringify(characters, null, 2),
     "Current world:",

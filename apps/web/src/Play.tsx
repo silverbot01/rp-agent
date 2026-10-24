@@ -405,6 +405,26 @@ function Sheets(props: { chat: Chat; boot: Bootstrap; save: (patch: Record<strin
         ))}
         <p className="badge">The narrator stays off until you check it. Replies come from the other people in the scene. The model does not write the one you play.</p>
       </div>
+      {props.chat.last_state_error ? (
+        <div className="banner">
+          <div>{props.chat.last_state_error} The sheet was left unchanged.</div>
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => {
+              void api<{ ok?: boolean; error?: string }>(`/api/chats/${props.chat.id}/state/retry`, { method: "POST", body: "{}" })
+                .then(async (result) => {
+                  if (result.ok === false && result.error) props.onBanner(result.error);
+                  else props.onBanner(null);
+                  await props.save({});
+                })
+                .catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "Retry failed."));
+            }}
+          >
+            Retry state
+          </button>
+        </div>
+      ) : null}
       {props.chat.cast.map((id) => {
         const card = props.boot.characters.find((character) => character.id === id);
         const state = sheets.characters[id];

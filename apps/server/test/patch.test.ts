@@ -65,6 +65,25 @@ test("unknown character ids are ignored", () => {
   assert.equal(result.notices.some((notice) => notice.includes("ghost")), true);
 });
 
+test("clothing written next to set is kept, and an empty string clears it", () => {
+  const parsed = parseStatePatch(JSON.stringify({ characters: { Mara: { clothing: "" } } }));
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  const result = applyPatch(sheets(), parsed.patch, { mara: "Mara" });
+  assert.equal(result.sheets.characters.mara?.dynamic.clothing, "");
+  assert.equal(result.sheets.characters.mara?.dynamic.emotion, "calm");
+});
+
+test("a full inventory list replaces the old one", () => {
+  const parsed = parseStatePatch(JSON.stringify({ characters: { mara: { inventory: "iron key" } }, world: { weather: "cold rain" } }));
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  const result = applyPatch(sheets(), parsed.patch, { mara: "Mara" });
+  assert.deepEqual(result.sheets.characters.mara?.dynamic.inventory, ["iron key"]);
+  assert.equal(result.sheets.world.dynamic.weather, "cold rain");
+  assert.equal(result.sheets.world.dynamic.time, "late afternoon");
+});
+
 test("a failed parse leaves the caller with the previous sheets", () => {
   const state = sheets();
   const reduced = reduceState(state, "no json here", { mara: "Mara" });

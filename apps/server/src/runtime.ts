@@ -54,6 +54,14 @@ async function providerError(response: Response): Promise<HttpError> {
   return new HttpError(502, `Model server returned ${response.status}. ${detail}`.trim());
 }
 
+function ollamaStateText(message: { content?: unknown; thinking?: unknown } | undefined): string {
+  const content = textOf(message?.content);
+  if (content.includes("{")) return content;
+  const thinking = textOf(message?.thinking);
+  if (thinking.includes("{")) return thinking;
+  return content || thinking;
+}
+
 function textOf(value: unknown): string {
   if (typeof value === "string") return value;
   if (!Array.isArray(value)) return "";
@@ -234,7 +242,11 @@ export async function completeText(input: CallInput & { purpose: "state"; sheets
     }
   };
   let built = buildChatBody({ ...input, stream: false });
-  if (input.kind === "ollama") built.body.format = STATE_JSON_SCHEMA;
+  if (input.kind === "ollama") {
+    built.body.format = STATE_JSON_SCHEMA;
+    // Thinking models often leave content empty, so the JSON never arrives. Leave think on only when the state sampler asks for it.
+    if (input.sampler.think !== true) built.body.think = false;
+  }
   if (input.kind === "spacexai" || input.kind === "openai" || input.kind === "openai_extra") {
     built.body.response_format = {
       type: "json_schema",
@@ -250,9 +262,19 @@ export async function completeText(input: CallInput & { purpose: "state"; sheets
   if (!response.ok) throw await providerError(response);
   const json = (await response.json()) as Record<string, unknown>;
   if (input.kind === "ollama") {
-    const message = json.message as { content?: unknown } | undefined;
+    let message = json.message as { content?: unknown; thinking?: unknown } | undefined;
+    let text = ollamaStateText(message);
+    if (!text.includes("{") && built.body.think !== false) {
+      built.body.think = false;
+      response = await send(built.body, false);
+      if (!response.ok) throw await providerError(response);
+      const again = (await response.json()) as Record<string, unknown>;
+      message = again.message as { content?: unknown; thinking?: unknown } | undefined;
+      text = ollamaStateText(message);
+      if (typeof again.prompt_eval_count === "number") json.prompt_eval_count = again.prompt_eval_count;
+    }
     return {
-      text: textOf(message?.content),
+      text,
       promptTokens: typeof json.prompt_eval_count === "number" ? json.prompt_eval_count : undefined,
     };
   }
