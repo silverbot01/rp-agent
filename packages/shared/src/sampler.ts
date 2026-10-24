@@ -3,6 +3,8 @@ import { z } from "zod";
 export const CONNECTION_KINDS = [
   "spacexai",
   "openai",
+  "openrouter",
+  "venice",
   "ollama",
   "kobold",
   "openai_extra",
@@ -131,8 +133,13 @@ export type SamplerFieldMeta = {
 const KOBOLD: ConnectionKind[] = ["kobold"];
 const OLLAMA: ConnectionKind[] = ["ollama"];
 const BOTH: ConnectionKind[] = ["kobold", "ollama"];
-const ALL: ConnectionKind[] = ["spacexai", "openai", "openai_extra", "kobold", "ollama"];
-const API: ConnectionKind[] = ["spacexai", "openai", "openai_extra"];
+const API: ConnectionKind[] = ["spacexai", "openai", "openai_extra", "openrouter", "venice"];
+const ALL: ConnectionKind[] = [...API, "kobold", "ollama"];
+
+/** OpenAI Chat Completions hosts, including SpaceXAI, OpenRouter, and Venice. */
+export function isChatCompletionKind(kind: ConnectionKind): boolean {
+  return API.includes(kind);
+}
 
 export const SAMPLER_FIELD_META: SamplerFieldMeta[] = [
   { key: "temperature", label: "Temperature", group: "common", widget: "number", step: 0.05, sends: ALL, sendsWhenExtra: false },
@@ -240,7 +247,7 @@ export function defaultStateSampler(): SamplerPreset {
 export function fieldIsSent(meta: SamplerFieldMeta, kind: ConnectionKind, extraSamplers: boolean): boolean {
   if (kind === "mock") return false;
   if (meta.sends.includes(kind)) return true;
-  if (extraSamplers && meta.sendsWhenExtra && (kind === "openai" || kind === "spacexai" || kind === "openai_extra")) {
+  if (extraSamplers && meta.sendsWhenExtra && isChatCompletionKind(kind)) {
     return true;
   }
   return false;

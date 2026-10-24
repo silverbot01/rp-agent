@@ -35,10 +35,14 @@ On the Play screen, choose **Start at the north gate** if you have no chat yet. 
 | Connection | Default base URL | Notes |
 | --- | --- | --- |
 | SpaceXAI | `https://api.x.ai/v1` | Model `grok-4.7`. Set `XAI_API_KEY`, or store a key on the connection. A stored key wins. |
+| OpenRouter | `https://openrouter.ai/api/v1` | Chat Completions. Model ids look like `author/slug`. Custom JSON is merged, which is where provider routing goes. Extra samplers start off. Store the key on the connection. |
+| Venice | `https://api.venice.ai/api/v1` | Chat Completions. Unknown top-level fields are rejected, so extra samplers start off. Put Venice options under `venice_parameters` in custom JSON. Store the key on the connection. Leave the model blank and load the list; model ids change. |
 | OpenAI-compatible | `http://127.0.0.1:8080/v1` | Chat Completions. Extra samplers (top-k, DRY, and the rest of the form-only fields) are sent only when that connection option is on. Custom JSON is always merged for this kind. |
 | Ollama | `http://127.0.0.1:11434` | `num_ctx` follows the chat context size unless custom JSON overrides it. DRY is not sent unless you put it in custom JSON. |
 | KoboldCPP | `http://127.0.0.1:5001` | Native generate API. DRY is native. Streaming falls back when the stream route is missing. |
 | Mock | `http://mock` | Offline, for the UI and tests. |
+
+OpenRouter and Venice are added to an existing database once. A later edit is kept, and deleting either connection stays deleted. Keys stay in the database and are not exported.
 
 Load model ids from the connection with **Load models**. KoboldCPP cannot embed. Pick an embedder on the Memory tab (Ollama, an OpenAI-compatible embeddings endpoint, or Mock). Search stays off until a rebuild finishes and the status is ready. The full transcript stays on screen; retrieval only changes what the model sees.
 

@@ -1,6 +1,7 @@
 import {
   OLLAMA_ROOT_KEYS,
   SAMPLER_FIELDS,
+  isChatCompletionKind,
   type ConnectionKind,
   type SamplerFieldKey,
   type SamplerPreset,
@@ -94,7 +95,7 @@ function buildOpenAI(input: BuildInput): SamplerBuild {
   if (sampler.stop.length > 0) body.stop = sampler.stop;
   if (sampler.seed >= 0) body.seed = sampler.seed;
 
-  const sendExtra = extraSamplers && (kind === "openai" || kind === "spacexai" || kind === "openai_extra");
+  const sendExtra = extraSamplers && isChatCompletionKind(kind);
   if (sendExtra) Object.assign(body, koboldSamplerFields(sampler, input.contextTokens, false));
 
   for (const field of SAMPLER_FIELDS) {
@@ -103,7 +104,8 @@ function buildOpenAI(input: BuildInput): SamplerBuild {
     mark(applied, dropped, field, standard || extraField);
   }
 
-  const allowCustom = kind === "openai" || kind === "openai_extra" || sendExtra;
+  // SpaceXAI drops custom JSON until extra samplers are on. OpenRouter and Venice always merge it.
+  const allowCustom = kind === "openai" || kind === "openai_extra" || kind === "openrouter" || kind === "venice" || sendExtra;
   assignCustom(body, sampler.custom, applied, dropped, allowCustom);
   return { body, applied, dropped };
 }

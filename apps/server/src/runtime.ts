@@ -3,6 +3,7 @@ import {
   buildChatBody,
   chatUrl,
   embeddingsUrl,
+  isChatCompletionKind,
   joinUrl,
   mockVector,
   modelsUrl,
@@ -33,9 +34,15 @@ type CallInput = {
   signal?: AbortSignal;
 };
 
-function headers(apiKey: string | null): Record<string, string> {
+function headers(apiKey: string | null, kind?: ConnectionKind): Record<string, string> {
   const result: Record<string, string> = { "Content-Type": "application/json" };
   if (apiKey) result.Authorization = `Bearer ${apiKey}`;
+  // OpenRouter uses these to attribute a local app. They are not required for the call.
+  if (kind === "openrouter") {
+    result["HTTP-Referer"] = "http://127.0.0.1:5173";
+    result["X-OpenRouter-Title"] = "rp-agent";
+    result["X-Title"] = "rp-agent";
+  }
   return result;
 }
 
@@ -86,7 +93,7 @@ export async function listModelIds(kind: ConnectionKind, baseUrl: string, apiKey
   if (kind === "mock") return ["mock"];
   let response: Response;
   try {
-    response = await fetch(modelsUrl(kind, baseUrl), { headers: headers(apiKey), signal });
+    response = await fetch(modelsUrl(kind, baseUrl), { headers: headers(apiKey, kind), signal });
   } catch (error) {
     asAbort(error, signal);
   }
@@ -124,7 +131,7 @@ export async function streamProse(input: CallInput, onToken: (text: string) => v
   const url = chatUrl(input.kind, input.baseUrl, true);
   let response: Response;
   try {
-    response = await fetch(url, { method: "POST", headers: headers(input.apiKey), body: JSON.stringify(built.body), signal: input.signal });
+    response = await fetch(url, { method: "POST", headers: headers(input.apiKey, input.kind), body: JSON.stringify(built.body), signal: input.signal });
   } catch (error) {
     asAbort(error, input.signal);
   }
@@ -134,7 +141,7 @@ export async function streamProse(input: CallInput, onToken: (text: string) => v
     try {
       second = await fetch(chatUrl(input.kind, input.baseUrl, false), {
         method: "POST",
-        headers: headers(input.apiKey),
+        headers: headers(input.apiKey, input.kind),
         body: JSON.stringify(fallback.body),
         signal: input.signal,
       });
@@ -233,7 +240,7 @@ export async function completeText(input: CallInput & { purpose: "state"; sheets
     try {
       return await fetch(chatUrl(input.kind, input.baseUrl, streamPath), {
         method: "POST",
-        headers: headers(input.apiKey),
+        headers: headers(input.apiKey, input.kind),
         body: JSON.stringify(body),
         signal: input.signal,
       });
@@ -247,14 +254,14 @@ export async function completeText(input: CallInput & { purpose: "state"; sheets
     // Thinking models often leave content empty, so the JSON never arrives. Leave think on only when the state sampler asks for it.
     if (input.sampler.think !== true) built.body.think = false;
   }
-  if (input.kind === "spacexai" || input.kind === "openai" || input.kind === "openai_extra") {
+  if (isChatCompletionKind(input.kind)) {
     built.body.response_format = {
       type: "json_schema",
       json_schema: { name: "state_patch", strict: false, schema: STATE_JSON_SCHEMA },
     };
   }
   let response = await send(built.body, false);
-  if (!response.ok && response.status === 400 && (input.kind === "spacexai" || input.kind === "openai" || input.kind === "openai_extra")) {
+  if (!response.ok && response.status === 400 && isChatCompletionKind(input.kind)) {
     built = buildChatBody({ ...input, stream: false });
     built.body.response_format = { type: "json_object" };
     response = await send(built.body, false);
@@ -303,7 +310,7 @@ export async function embedTexts(input: {
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: headers(input.apiKey),
+      headers: headers(input.apiKey, input.kind),
       body: JSON.stringify(input.kind === "ollama" ? { model: input.model, input: input.texts } : { model: input.model, input: input.texts }),
       signal: input.signal,
     });
@@ -317,7 +324,7 @@ export async function embedTexts(input: {
       try {
         legacy = await fetch(joinUrl(input.baseUrl, "/api/embeddings"), {
           method: "POST",
-          headers: headers(input.apiKey),
+          headers: headers(input.apiKey, input.kind),
           body: JSON.stringify({ model: input.model, prompt: text }),
           signal: input.signal,
         });

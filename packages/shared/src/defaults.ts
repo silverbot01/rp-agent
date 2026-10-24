@@ -80,6 +80,8 @@ export const DEFAULT_WORLD_TEMPLATE = `World state:
 
 export const SPACEXAI_BASE_URL = "https://api.x.ai/v1";
 export const SPACEXAI_MODEL = "grok-4.7";
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+export const VENICE_BASE_URL = "https://api.venice.ai/api/v1";
 
 export function normalizeOrder(order: unknown): BlockId[] {
   const seen = new Set<BlockId>();

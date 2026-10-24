@@ -5,9 +5,11 @@ import {
   DEFAULT_CHARACTER_TEMPLATE,
   DEFAULT_MAIN_PROMPT,
   DEFAULT_WORLD_TEMPLATE,
+  OPENROUTER_BASE_URL,
   PREVIOUS_DEFAULT_MAIN_PROMPT,
   SPACEXAI_BASE_URL,
   SPACEXAI_MODEL,
+  VENICE_BASE_URL,
   defaultSampler,
   defaultStateSampler,
 } from "@rp/shared";
@@ -197,12 +199,41 @@ function seed(db: DatabaseSync) {
     insert.run({ id: "preset-state", name: "State", purpose: "state", sampler_json: JSON.stringify(defaultStateSampler()), created_at: now });
   }
   seedLibrary(db, now);
+  seedHostedConnections(db, now);
+}
+
+function seedHostedConnections(db: DatabaseSync, now: string) {
+  const done = readSeededIds(db, SEEDED_CONNECTION_KEY);
+  const pending = ONCE_CONNECTIONS.filter((connection) => !done.has(connection.id));
+  if (pending.length === 0) return;
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO connections (id, name, kind, base_url, api_key, model, extra_samplers, created_at)
+     VALUES (:id, :name, :kind, :base_url, NULL, :model, 0, :created_at)`,
+  );
+  db.exec("BEGIN");
+  try {
+    for (const connection of pending) {
+      insert.run({ ...connection, created_at: now });
+      done.add(connection.id);
+    }
+    writeSeededIds(db, SEEDED_CONNECTION_KEY, done);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 const LIBRARY_SAMPLE_KEY = "library_sample_ids";
+const SEEDED_CONNECTION_KEY = "seeded_connection_ids";
 
-function readSeededIds(db: DatabaseSync): Set<string> {
-  const row = db.prepare("SELECT value FROM app_meta WHERE key = :key").get({ key: LIBRARY_SAMPLE_KEY }) as { value: string } | undefined;
+const ONCE_CONNECTIONS = [
+  { id: "conn-openrouter", name: "OpenRouter", kind: "openrouter", base_url: OPENROUTER_BASE_URL, model: "" },
+  { id: "conn-venice", name: "Venice", kind: "venice", base_url: VENICE_BASE_URL, model: "" },
+] as const;
+
+function readSeededIds(db: DatabaseSync, key: string): Set<string> {
+  const row = db.prepare("SELECT value FROM app_meta WHERE key = :key").get({ key }) as { value: string } | undefined;
   if (!row) return new Set();
   try {
     const parsed = JSON.parse(row.value) as unknown;
@@ -213,8 +244,15 @@ function readSeededIds(db: DatabaseSync): Set<string> {
   }
 }
 
+function writeSeededIds(db: DatabaseSync, key: string, ids: Set<string>) {
+  db.prepare(
+    `INSERT INTO app_meta (key, value) VALUES (:key, :value)
+     ON CONFLICT(key) DO UPDATE SET value = :value`,
+  ).run({ key, value: JSON.stringify([...ids].sort()) });
+}
+
 function seedLibrary(db: DatabaseSync, now: string) {
-  const done = readSeededIds(db);
+  const done = readSeededIds(db, LIBRARY_SAMPLE_KEY);
   const pendingCharacters = SAMPLE_CHARACTERS.filter((character) => !done.has(character.id));
   const pendingWorlds = SAMPLE_WORLDS.filter((world) => !done.has(world.id));
   if (pendingCharacters.length === 0 && pendingWorlds.length === 0) return;
@@ -265,10 +303,7 @@ function seedLibrary(db: DatabaseSync, now: string) {
       });
       done.add(world.id);
     }
-    db.prepare(
-      `INSERT INTO app_meta (key, value) VALUES (:key, :value)
-       ON CONFLICT(key) DO UPDATE SET value = :value`,
-    ).run({ key: LIBRARY_SAMPLE_KEY, value: JSON.stringify([...done].sort()) });
+    writeSeededIds(db, LIBRARY_SAMPLE_KEY, done);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

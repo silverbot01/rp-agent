@@ -11,6 +11,8 @@ const KIND_LABEL: Record<ConnectionKind, string> = {
   spacexai: "SpaceXAI",
   openai: "API",
   openai_extra: "API",
+  openrouter: "OpenRouter",
+  venice: "Venice",
   ollama: "Ollama",
   kobold: "Kobold",
   mock: "Mock",

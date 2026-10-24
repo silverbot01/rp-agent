@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildChatBody, defaultSampler, type SamplerPreset } from "@rp/shared";
+import { SAMPLER_FIELD_META, buildChatBody, chatUrl, defaultSampler, fieldIsSent, modelsUrl, type SamplerPreset } from "@rp/shared";
 
 const messages = [{ role: "user" as const, content: "hello" }];
 
@@ -121,6 +121,58 @@ test("OpenAI-compatible custom JSON merges even when extra samplers are off", ()
   });
   assert.equal(built.body.top_k, 20);
   assert.equal("dry_multiplier" in built.body, false);
+});
+
+test("OpenRouter and Venice send standard chat fields and custom JSON", () => {
+  const openrouter = buildChatBody({
+    kind: "openrouter",
+    model: "author/slug",
+    extraSamplers: false,
+    sampler: preset({ custom: { provider: { order: ["together"] } } }),
+    messages,
+    prompt: "prompt",
+    contextTokens: 8192,
+    stream: true,
+  });
+  assert.equal(openrouter.body.model, "author/slug");
+  assert.equal(openrouter.body.temperature, 1);
+  assert.equal(openrouter.body.max_tokens, defaultSampler().max_tokens);
+  assert.deepEqual(openrouter.body.provider, { order: ["together"] });
+  assert.equal("dry_multiplier" in openrouter.body, false);
+  assert.equal(openrouter.applied.includes("custom.provider"), true);
+  assert.equal(chatUrl("openrouter", "https://openrouter.ai/api/v1", true), "https://openrouter.ai/api/v1/chat/completions");
+  assert.equal(modelsUrl("openrouter", "https://openrouter.ai/api/v1"), "https://openrouter.ai/api/v1/models");
+
+  const venice = buildChatBody({
+    kind: "venice",
+    model: "",
+    extraSamplers: false,
+    sampler: preset({ custom: { venice_parameters: { include_venice_system_prompt: false } } }),
+    messages,
+    prompt: "prompt",
+    contextTokens: 8192,
+    stream: false,
+  });
+  assert.equal(venice.body.temperature, 1);
+  assert.equal(venice.body.top_p, 1);
+  assert.equal(venice.body.frequency_penalty, 0);
+  assert.equal(venice.body.presence_penalty, 0);
+  assert.deepEqual(venice.body.venice_parameters, { include_venice_system_prompt: false });
+  assert.equal("dry_multiplier" in venice.body, false);
+  assert.equal("top_k" in venice.body, false);
+  assert.equal(venice.applied.includes("custom.venice_parameters"), true);
+  assert.equal(chatUrl("venice", "https://api.venice.ai/api/v1/", false), "https://api.venice.ai/api/v1/chat/completions");
+  assert.equal(modelsUrl("venice", "https://api.venice.ai/api/v1"), "https://api.venice.ai/api/v1/models");
+
+  const temperature = SAMPLER_FIELD_META.find((field) => field.key === "temperature");
+  const dry = SAMPLER_FIELD_META.find((field) => field.key === "dry_multiplier");
+  assert.ok(temperature);
+  assert.ok(dry);
+  assert.equal(fieldIsSent(temperature, "openrouter", false), true);
+  assert.equal(fieldIsSent(temperature, "venice", false), true);
+  assert.equal(fieldIsSent(dry, "venice", false), false);
+  assert.equal(fieldIsSent(dry, "openrouter", false), false);
+  assert.equal(fieldIsSent(dry, "venice", true), true);
 });
 
 test("extra samplers send DRY on an OpenAI-compatible server", () => {

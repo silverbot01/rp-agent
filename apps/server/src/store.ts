@@ -9,6 +9,9 @@ import {
   DEFAULT_PRE_HISTORY,
   DEFAULT_STATE_INSTRUCTIONS,
   DEFAULT_WORLD_TEMPLATE,
+  OPENROUTER_BASE_URL,
+  SPACEXAI_BASE_URL,
+  VENICE_BASE_URL,
   WORLD_PIN_FIELDS,
   cloneSheets,
   defaultSampler,
@@ -404,7 +407,9 @@ export function createConnection(db: DatabaseSync, input: Record<string, unknown
 }
 
 export function defaultBaseUrl(kind: ConnectionKind): string {
-  if (kind === "spacexai") return "https://api.x.ai/v1";
+  if (kind === "spacexai") return SPACEXAI_BASE_URL;
+  if (kind === "openrouter") return OPENROUTER_BASE_URL;
+  if (kind === "venice") return VENICE_BASE_URL;
   if (kind === "ollama") return "http://127.0.0.1:11434";
   if (kind === "kobold") return "http://127.0.0.1:5001";
   if (kind === "mock") return "http://mock";

@@ -3,6 +3,8 @@ import {
   CONNECTION_KINDS,
   DEFAULT_CHARACTER_TEMPLATE,
   DEFAULT_WORLD_TEMPLATE,
+  OPENROUTER_BASE_URL,
+  VENICE_BASE_URL,
   WORLD_STRING_FIELDS,
   emptyCharacterDynamic,
   emptyWorldDynamic,
@@ -20,6 +22,8 @@ function preferred<T extends { id: string }>(items: T[], id: string): T | undefi
 const KIND_LABEL: Record<ConnectionKind, string> = {
   spacexai: "SpaceXAI",
   openai: "OpenAI-compatible",
+  openrouter: "OpenRouter",
+  venice: "Venice",
   openai_extra: "OpenAI-compatible, extra samplers",
   ollama: "Ollama",
   kobold: "KoboldCPP",
@@ -29,6 +33,8 @@ const KIND_LABEL: Record<ConnectionKind, string> = {
 const DEFAULT_URL: Record<ConnectionKind, string> = {
   spacexai: "https://api.x.ai/v1",
   openai: "http://127.0.0.1:8080/v1",
+  openrouter: OPENROUTER_BASE_URL,
+  venice: VENICE_BASE_URL,
   openai_extra: "http://127.0.0.1:8080/v1",
   ollama: "http://127.0.0.1:11434",
   kobold: "http://127.0.0.1:5001",
@@ -462,7 +468,7 @@ export function ConnectionsPage(props: { boot: Bootstrap; refresh: () => Promise
     const known = Object.values(DEFAULT_URL);
     const base_url = !draft.base_url || known.includes(draft.base_url) ? DEFAULT_URL[kind] : draft.base_url;
     const model = kind === "spacexai" && !draft.model ? "grok-4.7" : draft.model;
-    const extra_samplers = kind === "openai_extra" ? true : draft.extra_samplers;
+    const extra_samplers = kind === "openai_extra" ? true : kind === "openrouter" || kind === "venice" ? false : draft.extra_samplers;
     setDraft({ ...draft, kind, base_url, model, extra_samplers });
   }
 
@@ -527,17 +533,26 @@ export function ConnectionsPage(props: { boot: Bootstrap; refresh: () => Promise
               </select>
             </label>
             <label className="field">Base URL<input value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} /></label>
-            <label className="field">Model<input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} /></label>
+            <label className="field">
+              Model
+              <input
+                value={draft.model}
+                placeholder={draft.kind === "openrouter" ? "author/slug" : draft.kind === "venice" ? "From Load models" : ""}
+                onChange={(event) => setDraft({ ...draft, model: event.target.value })}
+              />
+            </label>
+            {draft.kind === "openrouter" ? <p className="badge">OpenRouter model ids look like author/slug. Custom JSON is merged, which is where provider routing goes. The key stays on this connection.</p> : null}
+            {draft.kind === "venice" ? <p className="badge">Venice rejects unknown top-level fields, so extra samplers stay off. Put Venice options in custom JSON under venice_parameters. The key stays on this connection.</p> : null}
             <label className="check">
               <input type="checkbox" checked={draft.extra_samplers} onChange={(event) => setDraft({ ...draft, extra_samplers: event.target.checked })} />
               Send extra samplers
             </label>
-            <p className="badge">OpenAI-compatible chats send top_k, DRY, and the other form-only fields only when this is on. SpaceXAI also drops custom JSON until it is on. Ollama sends its own options. KoboldCPP has native DRY. A DRY multiplier of 0 turns DRY off.</p>
+            <p className="badge">OpenAI-compatible chats send top_k, DRY, and the other form-only fields only when this is on. SpaceXAI also drops custom JSON until it is on. OpenRouter and Venice always merge custom JSON, and choosing either kind turns this off. Ollama sends its own options. KoboldCPP has native DRY. A DRY multiplier of 0 turns DRY off.</p>
             <label className="field">
               API key
               <input type="password" value={draft.api_key} placeholder={draft.has_key ? "Stored key stays unless you replace it" : "Optional"} autoComplete="off" onChange={(event) => setDraft({ ...draft, api_key: event.target.value, clear_key: false })} />
             </label>
-            <p className="badge">{draft.has_key ? "A key is available for this connection." : "No key is stored."} SpaceXAI uses a stored key when there is one, and otherwise XAI_API_KEY. The browser never receives the key.</p>
+            <p className="badge">{draft.has_key ? "A key is available for this connection." : "No key is stored."} SpaceXAI uses a stored key when there is one, and otherwise XAI_API_KEY. OpenRouter and Venice use the stored key. The browser never receives the key.</p>
             {draft.id ? (
               <label className="check">
                 <input type="checkbox" checked={draft.clear_key} onChange={(event) => setDraft({ ...draft, clear_key: event.target.checked, api_key: event.target.checked ? "" : draft.api_key })} />
