@@ -67,7 +67,33 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 .scroll { flex: 1; overflow: auto; padding: 1.5rem 8vw 1rem; }
 .bubble { max-width: 68ch; margin: 0 auto 1.15rem; }
+.who-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; }
 .bubble .who { color: var(--faint); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.bubble-actions { display: flex; gap: 0.35rem; flex-shrink: 0; }
+.bubble-actions button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--faint);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.75rem;
+}
+.bubble-actions button:hover { border-color: var(--line); color: var(--text); }
+.bubble-actions button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.bubble-actions button.primary:hover { color: var(--accent-ink); }
+.edit-message { display: flex; flex-direction: column; gap: 0.4rem; }
+.edit-message textarea {
+  width: 100%;
+  min-height: 6rem;
+  resize: vertical;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
 .bubble .body { font-family: var(--serif); font-size: 1.12rem; line-height: 1.55; white-space: pre-wrap; }
 .bubble.assistant .body { color: var(--text); }
 .bubble.user .body { color: #f6d7b8; }

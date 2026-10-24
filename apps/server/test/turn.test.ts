@@ -91,3 +91,95 @@ test("a mock turn updates sheets and undo restores them", async () => {
     app.close();
   }
 });
+
+test("messages can be edited or deleted, and restart restores the opening scene", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "rp-agent-"));
+  const app = createApp(path.join(dir, "test.db"));
+  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (app.server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}`;
+  type ChatBody = {
+    messages: { id: string; role: string; content: string }[];
+    revisions: unknown[];
+    sheets: {
+      characters: Record<string, { dynamic: { emotion: string }; pins: string[] }>;
+      world: { dynamic: { weather: string } };
+    };
+  };
+  try {
+    const created = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Rewrite", world_id: "world-gate", cast: ["char-mara"], connection_id: "conn-mock" }),
+    });
+    const chat = (await created.json()) as ChatBody & { id: string };
+    const greeting = chat.messages[0];
+    assert.equal(greeting?.role, "assistant");
+    assert.equal(greeting?.content, "You're late. The road has been too quiet.");
+
+    const turn = await fetch(`${base}/api/chats/${chat.id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "I mention the rain." }),
+    });
+    const blocked = await fetch(`${base}/api/chats/${chat.id}/messages/${greeting?.id}`, { method: "DELETE" });
+    assert.equal(blocked.status, 409);
+    await turn.text();
+
+    const played = (await (await fetch(`${base}/api/chats/${chat.id}`)).json()) as ChatBody;
+    const user = played.messages.find((message) => message.role === "user");
+    const reply = [...played.messages].reverse().find((message) => message.role === "assistant" && message.id !== greeting?.id);
+    assert.ok(user && reply);
+    assert.equal(played.sheets.characters["char-mara"]?.dynamic.emotion, "wary");
+
+    const edited = await fetch(`${base}/api/chats/${chat.id}/messages/${user.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "  I wait under the arch.  " }),
+    });
+    assert.equal(edited.status, 200);
+    const afterEdit = (await edited.json()) as ChatBody;
+    assert.equal(afterEdit.messages.find((message) => message.id === user.id)?.content, "I wait under the arch.");
+    assert.equal(afterEdit.sheets.characters["char-mara"]?.dynamic.emotion, "wary");
+
+    const replyEdit = await fetch(`${base}/api/chats/${chat.id}/messages/${reply.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Mara looks up." }),
+    });
+    assert.equal(replyEdit.status, 200);
+    const blank = await fetch(`${base}/api/chats/${chat.id}/messages/${reply.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "   " }),
+    });
+    assert.equal(blank.status, 400);
+
+    const pinned = structuredClone(afterEdit.sheets);
+    pinned.characters["char-mara"]!.pins = ["emotion"];
+    const pinSave = await fetch(`${base}/api/chats/${chat.id}/`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheets: pinned }),
+    });
+    assert.equal(pinSave.status, 200);
+
+    const removed = await fetch(`${base}/api/chats/${chat.id}/messages/${reply.id}`, { method: "DELETE" });
+    assert.equal(removed.status, 200);
+    const afterDelete = (await removed.json()) as ChatBody;
+    assert.equal(afterDelete.messages.some((message) => message.id === reply.id), false);
+    assert.equal(afterDelete.sheets.characters["char-mara"]?.dynamic.emotion, "wary");
+
+    const restarted = await fetch(`${base}/api/chats/${chat.id}/restart`, { method: "POST" });
+    assert.equal(restarted.status, 200);
+    const fresh = (await restarted.json()) as ChatBody;
+    assert.deepEqual(fresh.messages.map((message) => message.content), ["You're late. The road has been too quiet."]);
+    assert.equal(fresh.sheets.characters["char-mara"]?.dynamic.emotion, "calm");
+    assert.equal(fresh.sheets.characters["char-mara"]?.pins.includes("emotion"), true);
+    assert.equal(fresh.sheets.world.dynamic.weather, "clear");
+    assert.equal(fresh.revisions.length, 0);
+  } finally {
+    await new Promise<void>((resolve, reject) => app.server.close((error) => (error ? reject(error) : resolve())));
+    app.close();
+  }
+});

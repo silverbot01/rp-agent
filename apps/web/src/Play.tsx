@@ -22,6 +22,8 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
   const [chat, setChat] = useState<Chat | null>(null);
   const [tab, setTab] = useState<Tab>("sheets");
   const [draft, setDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState("");
   const [live, setLive] = useState("");
   const [sending, setSending] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
@@ -38,6 +40,7 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
   useEffect(() => {
     setBanner(null);
     setNotices([]);
+    setEditingId(null);
     void load().catch((error: unknown) => setBanner(error instanceof Error ? error.message : "Could not load the chat."));
   }, [props.chatId]);
 
@@ -103,6 +106,40 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
     await api(`/api/chats/${current.id}/stop`, { method: "POST", body: "{}" }).catch(() => undefined);
   }
 
+  async function saveEdit(messageId: string) {
+    const content = editingText.trim();
+    if (!content) {
+      setBanner("Message text is required.");
+      return;
+    }
+    setBanner(null);
+    const next = await api<Chat>(`/api/chats/${current.id}/messages/${messageId}`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    });
+    setChat(next);
+    setEditingId(null);
+  }
+
+  async function removeMessage(messageId: string) {
+    if (!window.confirm("Delete this message? The sheets stay as they are.")) return;
+    setBanner(null);
+    const next = await api<Chat>(`/api/chats/${current.id}/messages/${messageId}`, { method: "DELETE" });
+    if (editingId === messageId) setEditingId(null);
+    setChat(next);
+  }
+
+  async function restart() {
+    if (!window.confirm("Start this scene over? The transcript is cleared, sheets return to the character and world cards, and play memories are removed. Prompts, cast, and pins stay.")) return;
+    setBanner(null);
+    setNotices([]);
+    setLive("");
+    setEditingId(null);
+    const next = await api<Chat>(`/api/chats/${current.id}/restart`, { method: "POST", body: "{}" });
+    setChat(next);
+    await props.refreshBoot();
+  }
+
   async function save(patch: Record<string, unknown>) {
     const next = await api<Chat>(`/api/chats/${current.id}`, { method: "PUT", body: JSON.stringify(patch) });
     setChat(next);
@@ -125,8 +162,44 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
         <div className="scroll">
           {chat.messages.map((message) => (
             <article className={`bubble ${message.role}`} key={message.id}>
-              <div className="who">{message.role === "user" ? roles.playerName : roles.replyName}</div>
-              <div className="body">{message.content}</div>
+              <div className="who-row">
+                <div className="who">{message.role === "user" ? roles.playerName : roles.replyName}</div>
+                {editingId === message.id ? null : (
+                  <div className="bubble-actions">
+                    <button
+                      type="button"
+                      disabled={sending}
+                      onClick={() => {
+                        setEditingId(message.id);
+                        setEditingText(message.content);
+                        setBanner(null);
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button type="button" disabled={sending} onClick={() => void removeMessage(message.id).catch((error: unknown) => setBanner(error instanceof Error ? error.message : "Could not delete the message."))}>
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+              {editingId === message.id ? (
+                <div className="edit-message">
+                  <textarea
+                    value={editingText}
+                    aria-label={`Edit message from ${message.role === "user" ? roles.playerName : roles.replyName}`}
+                    onChange={(event) => setEditingText(event.target.value)}
+                  />
+                  <div className="bubble-actions">
+                    <button className="primary" type="button" disabled={!editingText.trim()} onClick={() => void saveEdit(message.id).catch((error: unknown) => setBanner(error instanceof Error ? error.message : "Could not save the message."))}>
+                      Save
+                    </button>
+                    <button className="ghost" type="button" onClick={() => setEditingId(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="body">{message.content}</div>
+              )}
             </article>
           ))}
           {sending || live ? (
@@ -167,6 +240,7 @@ export function Play(props: { chatId: string; boot: Bootstrap; refreshBoot: () =
             <button className="primary" type="submit" disabled={sending || !draft.trim()}>Send</button>
             <button className="ghost" type="button" disabled={!sending} onClick={() => void stop()}>Stop</button>
             <button className="ghost" type="button" disabled={sending} onClick={() => void send(true)}>Regenerate</button>
+            <button className="ghost" type="button" disabled={sending} onClick={() => void restart().catch((error: unknown) => setBanner(error instanceof Error ? error.message : "Could not restart the scene."))}>Restart</button>
           </div>
         </form>
       </section>

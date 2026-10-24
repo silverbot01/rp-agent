@@ -692,13 +692,11 @@ export function createChat(db: DatabaseSync, input: Record<string, unknown>): Ch
   const sheets = emptySheets();
   if (world) sheets.world.dynamic = normalizeWorldDynamic(world.initial_dynamic);
   const playerId = typeof input.player_character_id === "string" && cast.includes(input.player_character_id) ? input.player_character_id : null;
-  let greeting = "";
   for (const characterId of cast) {
     const character = getCharacter(db, characterId);
     sheets.characters[characterId] = { dynamic: normalizeCharacterDynamic(character.initial_dynamic), pins: [] };
-    if (characterId === playerId) continue;
-    if (!greeting && character.greeting.trim()) greeting = character.greeting.trim();
   }
+  const greeting = openingGreeting(db, cast, playerId);
   const connectionId = input.connection_id === undefined ? "conn-mock" : input.connection_id ? String(input.connection_id) : null;
   if (connectionId) getConnection(db, connectionId);
   const connection = connectionId ? getConnection(db, connectionId) : null;
@@ -897,12 +895,89 @@ export function addMessage(db: DatabaseSync, chatId: string, role: "user" | "ass
   return { id, role, content, created_at };
 }
 
+export function updateMessage(db: DatabaseSync, chatId: string, messageId: string, content: string): ChatDetail {
+  getChatRow(db, chatId);
+  const text = content.trim();
+  if (!text) throw new HttpError(400, "Message text is required.");
+  const result = db.prepare("UPDATE messages SET content = :content WHERE id = :id AND chat_id = :chat_id").run({
+    id: messageId,
+    chat_id: chatId,
+    content: text,
+  });
+  if (Number(result.changes) === 0) throw new HttpError(404, "Message not found.");
+  db.prepare(
+    `UPDATE chunks SET text = :text, stale = 1, embedding = NULL
+     WHERE scope = 'chat' AND scope_id = :chat_id AND source = 'message' AND source_id = :id`,
+  ).run({ text, chat_id: chatId, id: messageId });
+  db.prepare("UPDATE chats SET updated_at = :updated_at WHERE id = :id").run({ id: chatId, updated_at: nowIso() });
+  return getChat(db, chatId);
+}
+
 export function deleteMessage(db: DatabaseSync, chatId: string, messageId: string) {
-  db.prepare("DELETE FROM messages WHERE id = :id AND chat_id = :chat_id").run({ id: messageId, chat_id: chatId });
+  const result = db.prepare("DELETE FROM messages WHERE id = :id AND chat_id = :chat_id").run({ id: messageId, chat_id: chatId });
+  if (Number(result.changes) === 0) throw new HttpError(404, "Message not found.");
   db.prepare("DELETE FROM chunks WHERE scope = 'chat' AND scope_id = :chat_id AND source = 'message' AND source_id = :id").run({
     chat_id: chatId,
     id: messageId,
   });
+  db.prepare("UPDATE chats SET updated_at = :updated_at WHERE id = :id").run({ id: chatId, updated_at: nowIso() });
+}
+
+function openingGreeting(db: DatabaseSync, cast: string[], playerId: string | null): string {
+  for (const characterId of cast) {
+    if (characterId === playerId) continue;
+    const greeting = getCharacter(db, characterId).greeting.trim();
+    if (greeting) return greeting;
+  }
+  return "";
+}
+
+export function restartChat(db: DatabaseSync, id: string): ChatDetail {
+  const current = getChatRow(db, id);
+  const sheets = cloneSheets(current.sheets);
+  for (const characterId of current.cast) {
+    const character = getCharacter(db, characterId);
+    sheets.characters[characterId] = {
+      dynamic: normalizeCharacterDynamic(character.initial_dynamic),
+      pins: normalizePins(sheets.characters[characterId]?.pins ?? [], CHARACTER_PIN_FIELDS),
+    };
+  }
+  if (current.world_id) {
+    const world = getWorld(db, current.world_id);
+    sheets.world = {
+      dynamic: normalizeWorldDynamic(world.initial_dynamic),
+      pins: normalizePins(sheets.world.pins, WORLD_PIN_FIELDS),
+    };
+  } else {
+    sheets.world = {
+      dynamic: emptyWorldDynamic(),
+      pins: normalizePins(sheets.world.pins, WORLD_PIN_FIELDS),
+    };
+  }
+  const greeting = openingGreeting(db, current.cast, current.player_character_id);
+  const now = nowIso();
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM messages WHERE chat_id = :id").run({ id });
+    db.prepare("DELETE FROM revisions WHERE chat_id = :id").run({ id });
+    db.prepare("DELETE FROM chunks WHERE scope = 'chat' AND scope_id = :id AND source IN ('message', 'memory')").run({ id });
+    db.prepare(
+      `UPDATE chats SET character_state_json = :characters, world_state_json = :world,
+        last_retrieval_json = '[]', last_prompt_tokens = NULL, last_state_error = NULL, updated_at = :updated_at
+       WHERE id = :id`,
+    ).run({
+      id,
+      characters: JSON.stringify(sheets.characters),
+      world: JSON.stringify(sheets.world),
+      updated_at: now,
+    });
+    if (greeting) addMessage(db, id, "assistant", greeting);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return getChat(db, id);
 }
 
 export function recordRevision(

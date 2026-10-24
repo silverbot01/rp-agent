@@ -19,6 +19,7 @@ import {
   deleteWorld,
   exportLibrary,
   getChat,
+  deleteMessage,
   getConnection,
   getEmbedder,
   importLibrary,
@@ -29,9 +30,11 @@ import {
   listWorlds,
   saveCharacter,
   saveWorld,
+  restartChat,
   setEmbedder,
   updateChat,
   updateConnection,
+  updateMessage,
   updatePreset,
 } from "./store.ts";
 import { applyStateUpdate, confirmRevision, discardRevision, runTurn, undoRevision } from "./turn.ts";
@@ -256,6 +259,21 @@ async function handle(db: ReturnType<typeof openDatabase>, active: Map<string, A
     active.get(parts[2])?.abort();
     return sendJson(req, res, 200, { ok: true });
   }
+  if (parts[1] === "chats" && parts[2] && parts[3] === "messages" && parts[4] && !parts[5]) {
+    ensureIdle(active, parts[2]);
+    if (req.method === "PUT") {
+      const body = (await readJson(req)) as { content?: unknown };
+      return sendJson(req, res, 200, updateMessage(db, parts[2], parts[4], String(body.content ?? "")));
+    }
+    if (req.method === "DELETE") {
+      deleteMessage(db, parts[2], parts[4]);
+      return sendJson(req, res, 200, getChat(db, parts[2]));
+    }
+  }
+  if (parts[1] === "chats" && parts[2] && parts[3] === "restart" && !parts[4] && req.method === "POST") {
+    ensureIdle(active, parts[2]);
+    return sendJson(req, res, 200, restartChat(db, parts[2]));
+  }
   if (parts[1] === "chats" && parts[2] && parts[3] === "state" && parts[4] === "retry" && req.method === "POST") {
     const result = await applyStateUpdate(db, parts[2]);
     return sendJson(req, res, 200, { ...result, chat: getChat(db, parts[2]) });
@@ -283,6 +301,10 @@ async function handle(db: ReturnType<typeof openDatabase>, active: Map<string, A
   }
 
   sendJson(req, res, 404, { error: "Not found." });
+}
+
+function ensureIdle(active: Map<string, AbortController>, chatId: string) {
+  if (active.has(chatId)) throw new HttpError(409, "This chat is already generating.");
 }
 
 function normalizeOrThrow(input: unknown) {
