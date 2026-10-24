@@ -11,6 +11,7 @@ import {
   defaultSampler,
   defaultStateSampler,
 } from "@rp/shared";
+import { SAMPLE_CHARACTERS, SAMPLE_WORLDS } from "./samples.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS connections (
@@ -139,6 +140,11 @@ CREATE TABLE IF NOT EXISTS chunks (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_revisions_chat ON revisions(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope, scope_id);
@@ -190,62 +196,82 @@ function seed(db: DatabaseSync) {
     insert.run({ id: "preset-story", name: "Story", purpose: "prose", sampler_json: JSON.stringify(defaultSampler()), created_at: now });
     insert.run({ id: "preset-state", name: "State", purpose: "state", sampler_json: JSON.stringify(defaultStateSampler()), created_at: now });
   }
-  const characters = db.prepare("SELECT COUNT(*) AS n FROM characters").get() as { n: number };
-  if (characters.n === 0) {
-    db.prepare(
-      `INSERT INTO characters (
-        id, name, description, personality, scenario, example_dialogue, greeting, tags,
-        dynamic_template, initial_dynamic_json, created_at, updated_at
-      ) VALUES (
-        'char-mara', 'Mara',
-        'Gate warden at the north road. Broad-shouldered, ink on her fingers from the ledger.',
-        'Dry humor. Wary of strangers. Keeps a promise once she makes it.',
-        'The north gate at the end of a watch.',
-        '',
-        'You''re late. The road has been too quiet.',
-        'warden',
-        :template, :dynamic, :now, :now
-      )`,
-    ).run({
-      template: DEFAULT_CHARACTER_TEMPLATE,
-      dynamic: JSON.stringify({
-        clothing: "oilskin cloak",
-        emotion: "calm",
-        posture: "leaning on the gate",
-        location: "the north gate",
-        inventory: ["ledger", "iron key"],
-        injuries: "",
-        goals: "close the gate at full dark",
-        note: "",
-        custom: {},
-      }),
-      now,
-    });
+  seedLibrary(db, now);
+}
+
+const LIBRARY_SAMPLE_KEY = "library_sample_ids";
+
+function readSeededIds(db: DatabaseSync): Set<string> {
+  const row = db.prepare("SELECT value FROM app_meta WHERE key = :key").get({ key: LIBRARY_SAMPLE_KEY }) as { value: string } | undefined;
+  if (!row) return new Set();
+  try {
+    const parsed = JSON.parse(row.value) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
   }
-  const worlds = db.prepare("SELECT COUNT(*) AS n FROM worlds").get() as { n: number };
-  if (worlds.n === 0) {
+}
+
+function seedLibrary(db: DatabaseSync, now: string) {
+  const done = readSeededIds(db);
+  const pendingCharacters = SAMPLE_CHARACTERS.filter((character) => !done.has(character.id));
+  const pendingWorlds = SAMPLE_WORLDS.filter((world) => !done.has(world.id));
+  if (pendingCharacters.length === 0 && pendingWorlds.length === 0) return;
+
+  const insertCharacter = db.prepare(
+    `INSERT OR IGNORE INTO characters (
+      id, name, description, personality, scenario, example_dialogue, greeting, tags,
+      dynamic_template, initial_dynamic_json, created_at, updated_at
+    ) VALUES (
+      :id, :name, :description, :personality, :scenario, '', :greeting, :tags,
+      :template, :dynamic, :now, :now
+    )`,
+  );
+  const insertWorld = db.prepare(
+    `INSERT OR IGNORE INTO worlds (
+      id, name, description, lore_json, dynamic_template, initial_dynamic_json, created_at, updated_at
+    ) VALUES (
+      :id, :name, :description, :lore, :template, :dynamic, :now, :now
+    )`,
+  );
+
+  db.exec("BEGIN");
+  try {
+    for (const character of pendingCharacters) {
+      insertCharacter.run({
+        id: character.id,
+        name: character.name,
+        description: character.description,
+        personality: character.personality,
+        scenario: character.scenario,
+        greeting: character.greeting,
+        tags: character.tags,
+        template: DEFAULT_CHARACTER_TEMPLATE,
+        dynamic: JSON.stringify(character.dynamic),
+        now,
+      });
+      done.add(character.id);
+    }
+    for (const world of pendingWorlds) {
+      insertWorld.run({
+        id: world.id,
+        name: world.name,
+        description: world.description,
+        lore: JSON.stringify(world.lore),
+        template: DEFAULT_WORLD_TEMPLATE,
+        dynamic: JSON.stringify(world.dynamic),
+        now,
+      });
+      done.add(world.id);
+    }
     db.prepare(
-      `INSERT INTO worlds (
-        id, name, description, lore_json, dynamic_template, initial_dynamic_json, created_at, updated_at
-      ) VALUES ('world-gate', 'The Gate Road', :description, :lore, :template, :dynamic, :now, :now)`,
-    ).run({
-      description: "A packed-dirt road between low hills, ending at a timber gate.",
-      lore: JSON.stringify([
-        { id: "lore-gate", text: "The gate is iron-banded timber and closes at full dark.", mode: "always", keywords: [] },
-        { id: "lore-rain", text: "Rain turns the road to clay within an hour.", mode: "keyword", keywords: ["rain"] },
-        { id: "lore-marker", text: "An old mile-marker west of the gate is carved with a faded sun.", mode: "rag", keywords: [] },
-      ]),
-      template: DEFAULT_WORLD_TEMPLATE,
-      dynamic: JSON.stringify({
-        time: "late afternoon",
-        weather: "clear",
-        place: "the north gate",
-        atmosphere: "still",
-        ongoing: "the watch is ending",
-        chronicle: "",
-        custom: {},
-      }),
-      now,
-    });
+      `INSERT INTO app_meta (key, value) VALUES (:key, :value)
+       ON CONFLICT(key) DO UPDATE SET value = :value`,
+    ).run({ key: LIBRARY_SAMPLE_KEY, value: JSON.stringify([...done].sort()) });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
 }

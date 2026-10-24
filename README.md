@@ -23,8 +23,10 @@ The database file is `data/rp-agent.db`. Set `RP_DB` to use another path. Set `P
 The first database includes:
 
 - **Mock (offline)** — local replies that need no model server. The narrator starts off.
-- **Mara** — clothing starts as an oilskin cloak, emotion calm
-- **The Gate Road** — late afternoon, clear weather, the north gate
+- **Mara** — clothing starts as an oilskin cloak, emotion calm. She is the only character in a new chat.
+- **The Gate Road** — late afternoon, clear weather, the north gate. This is the default world.
+
+The library also includes other characters (Ivo, Sera, Hale, Lin, Cal, Rhee, and Jun) and other worlds (The River Inn, Salt Harbor, The Closed Stacks, The Cloister Garden, Relay Station, and Rain District). They stay out of a new scene until you add them. Edits you save on a sample card are kept. Deleting a sample card stays deleted.
 
 On the Play screen, choose **Start at the north gate** if you have no chat yet. Send a line about rain. The mock updates Mara’s emotion to wary and her clothing to a wet wool cloak, and sets the weather to cold rain and the time to just after dusk. Undo on the Sheets tab restores the previous sheet.
 

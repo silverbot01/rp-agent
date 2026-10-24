@@ -13,6 +13,10 @@ import { useEffect, useState } from "react";
 import { api } from "./api.ts";
 import type { Bootstrap, Character, Connection, Preset, World } from "./types.ts";
 
+function preferred<T extends { id: string }>(items: T[], id: string): T | undefined {
+  return items.find((item) => item.id === id) ?? items[0];
+}
+
 const KIND_LABEL: Record<ConnectionKind, string> = {
   spacexai: "SpaceXAI",
   openai: "OpenAI-compatible",
@@ -90,11 +94,12 @@ function blankWorld(): World {
 }
 
 export function CharactersPage(props: { boot: Bootstrap; refresh: () => Promise<void>; onError: (text: string | null) => void }) {
-  const [selected, setSelected] = useState<string | null>(props.boot.characters[0]?.id ?? null);
+  const opening = preferred(props.boot.characters, "char-mara");
+  const [selected, setSelected] = useState<string | null>(opening?.id ?? null);
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState<Character | null>(props.boot.characters[0] ?? null);
-  const [inventory, setInventory] = useState(props.boot.characters[0]?.initial_dynamic.inventory.join(", ") ?? "");
-  const [customText, setCustomText] = useState(customToText(props.boot.characters[0]?.initial_dynamic.custom ?? {}));
+  const [draft, setDraft] = useState<Character | null>(opening ?? null);
+  const [inventory, setInventory] = useState(opening?.initial_dynamic.inventory.join(", ") ?? "");
+  const [customText, setCustomText] = useState(customToText(opening?.initial_dynamic.custom ?? {}));
 
   useEffect(() => {
     if (creating) return;
@@ -183,10 +188,11 @@ export function CharactersPage(props: { boot: Bootstrap; refresh: () => Promise<
 }
 
 export function WorldsPage(props: { boot: Bootstrap; refresh: () => Promise<void>; onError: (text: string | null) => void }) {
-  const [selected, setSelected] = useState<string | null>(props.boot.worlds[0]?.id ?? null);
+  const opening = preferred(props.boot.worlds, "world-gate");
+  const [selected, setSelected] = useState<string | null>(opening?.id ?? null);
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState<World | null>(props.boot.worlds[0] ?? null);
-  const [customText, setCustomText] = useState(customToText(props.boot.worlds[0]?.initial_dynamic.custom ?? {}));
+  const [draft, setDraft] = useState<World | null>(opening ?? null);
+  const [customText, setCustomText] = useState(customToText(opening?.initial_dynamic.custom ?? {}));
 
   useEffect(() => {
     if (creating) return;
@@ -293,7 +299,7 @@ export function ChatsPage(props: { boot: Bootstrap; refresh: () => Promise<void>
   const [worldId, setWorldId] = useState(props.boot.worlds.find((world) => world.id === "world-gate")?.id ?? props.boot.worlds[0]?.id ?? "");
   const [connectionId, setConnectionId] = useState(mock?.id ?? "");
   const [persona, setPersona] = useState("You");
-  const [cast, setCast] = useState<string[]>(props.boot.characters[0] ? [props.boot.characters[0].id] : []);
+  const [cast, setCast] = useState<string[]>(props.boot.characters.some((character) => character.id === "char-mara") ? ["char-mara"] : []);
   const [narrator, setNarrator] = useState(false);
   const [playerId, setPlayerId] = useState<string | null>(null);
 
